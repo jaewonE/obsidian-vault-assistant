@@ -1,8 +1,118 @@
-/*
+.nlm-chat-view,
+.nlm-chat-view .view-content {
+	height: 100%;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.nlm-chat-root {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	gap: 10px;
+	padding: 12px;
+	box-sizing: border-box;
+}
 
-If your plugin does not need CSS, delete this file.
+.nlm-chat-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
 
-*/
+.nlm-chat-title {
+	font-weight: 600;
+}
+
+.nlm-chat-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.nlm-chat-messages {
+	flex: 1;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-right: 4px;
+}
+
+.nlm-chat-empty,
+.nlm-chat-pending {
+	font-size: 0.9em;
+	opacity: 0.8;
+	padding: 8px;
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: 8px;
+}
+
+.nlm-chat-message {
+	max-width: 92%;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	border-radius: 10px;
+	white-space: pre-wrap;
+	line-height: 1.4;
+}
+
+.nlm-chat-user {
+	align-self: flex-end;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.nlm-chat-assistant {
+	align-self: flex-start;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.nlm-chat-message-time {
+	font-size: 0.75em;
+	opacity: 0.7;
+}
+
+.nlm-chat-composer {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.nlm-chat-input {
+	width: 100%;
+	resize: vertical;
+	min-height: 70px;
+	padding: 8px;
+	box-sizing: border-box;
+}
+
+.nlm-history-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 60vh;
+	overflow-y: auto;
+}
+
+.nlm-history-item {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 10px;
+	cursor: pointer;
+}
+
+.nlm-history-item:hover {
+	background: var(--background-modifier-hover);
+}
+
+.nlm-history-item-title {
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.nlm-history-item-meta {
+	font-size: 0.85em;
+	opacity: 0.8;
+}

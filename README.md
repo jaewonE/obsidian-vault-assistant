@@ -1,90 +1,138 @@
-# Obsidian Sample Plugin
+# Obsidian Vault Assistant
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Version: `0.1.0`
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- `notebooklm-mcp` (MCP server)
+- `nlm` (CLI for login/diagnostics)
 
-## First time developing plugins?
+The plugin provides a right-sidebar chat workflow:
 
-Quick starting guide for new plugin devs:
+1. BM25 search over vault markdown notes
+2. Top N and dynamic threshold source selection
+3. Upload selected notes as NotebookLM text sources (if missing)
+4. Query NotebookLM with restricted `source_ids`
+5. Persist conversation history and query metadata
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## Features
 
-## Releasing new releases
+- Right sidebar chat view (single-tab operation)
+- `New` action for a fresh conversation context
+- `History` modal to reload prior conversations
+- Source registry with capacity control and eviction
+- Settings for debug mode, auth refresh, and BM25 parameters
+- Resilient MCP client integration (stdio subprocess + reconnect)
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+## Requirements
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+- Obsidian Desktop
+- Node.js 18+
+- Global installation of `notebooklm-mcp-cli`
 
-## Adding your plugin to the community plugin list
+Install `notebooklm-mcp-cli` (one option):
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```bash
+pip install notebooklm-mcp-cli
+# or
+uv tool install notebooklm-mcp-cli
+# or
+pipx install notebooklm-mcp-cli
 ```
 
-If you have multiple URLs, you can also do:
+Authenticate NotebookLM before plugin use:
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+```bash
+nlm login
+nlm login --check
 ```
 
-## API Documentation
+## Development
 
-See https://docs.obsidian.md
+Install dependencies:
+
+```bash
+npm install
+```
+
+Watch build:
+
+```bash
+npm run dev
+```
+
+Production build:
+
+```bash
+npm run build
+```
+
+## Usage
+
+1. Build the plugin.
+2. Copy `main.js`, `manifest.json`, and `styles.css` to:
+   - `<Vault>/.obsidian/plugins/obsidian-vault-assistant/`
+3. Enable the plugin at **Settings → Community plugins**.
+4. Run command: `Open NotebookLM chat`.
+5. Ask questions in the right sidebar chat view.
+
+## Settings
+
+- `Debug mode`
+- `Refresh Auth`
+- BM25 parameters:
+  - `Top N`
+  - `cutoff ratio`
+  - `min K`
+  - `k1`
+  - `b`
+- Query timeout seconds
+
+## Repository structure
+
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/main.ts`: minimal entrypoint
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/NotebookLMPlugin.ts`: plugin lifecycle + orchestration
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/search/BM25.ts`: BM25 indexing/search logic
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/storage/PluginDataStore.ts`: persisted settings/history/source registry
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/ui/`: chat view, history modal, settings tab
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/logging/logger.ts`: debug-aware logging
+
+## Implementation considerations (from AGENTS.md)
+
+- Keep `main.ts` minimal and move feature logic into dedicated modules.
+- Use npm and esbuild for install/build (`npm install`, `npm run dev`, `npm run build`).
+- Keep stable command IDs; avoid renaming public command IDs after release.
+- Persist settings/data via `loadData()` and `saveData()`.
+- Register listeners with Obsidian `register*` helpers for safe unload behavior.
+- Do not commit build artifacts (`main.js`) or `node_modules/`.
+- Maintain accurate `manifest.json` and `versions.json` version compatibility.
+- Treat plugin `id` as stable once publicly released.
+- Keep desktop/mobile constraints explicit via `isDesktopOnly`.
+- Follow Obsidian privacy/security guidance (no hidden telemetry, explicit disclosures).
+
+## Troubleshooting
+
+`notebooklm-mcp` or `nlm` not found:
+
+```bash
+which notebooklm-mcp
+which nlm
+```
+
+If missing, reinstall globally.
+
+Authentication issues:
+
+```bash
+nlm login
+nlm login --check
+```
+
+Then use `Refresh Auth` in plugin settings.
+
+General diagnostics:
+
+```bash
+nlm doctor --verbose
+```
