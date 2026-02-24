@@ -1,4 +1,4 @@
-import { ButtonComponent, ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { ButtonComponent, ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type NotebookLMPlugin from "../main";
 import { HistoryModal } from "./HistoryModal";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "./constants";
@@ -11,6 +11,7 @@ export class ChatView extends ItemView {
 	private newButton: ButtonComponent | null = null;
 	private historyButton: ButtonComponent | null = null;
 	private busy = false;
+	private renderVersion = 0;
 
 	constructor(leaf: WorkspaceLeaf, plugin: NotebookLMPlugin) {
 		super(leaf);
@@ -87,35 +88,60 @@ export class ChatView extends ItemView {
 	}
 
 	private renderMessages(): void {
+		const currentRenderVersion = ++this.renderVersion;
+		void this.renderMessagesInternal(currentRenderVersion);
+	}
+
+	private async renderMessagesInternal(renderVersion: number): Promise<void> {
 		if (!this.messageListEl) {
 			return;
 		}
 
-		this.messageListEl.empty();
+		const messageListEl = this.messageListEl;
+		messageListEl.empty();
 		const conversation = this.plugin.getActiveConversation();
 		if (conversation.messages.length === 0) {
-			this.messageListEl.createDiv({
+			messageListEl.createDiv({
 				cls: "nlm-chat-empty",
 				text: "Ask a question to run BM25 over your vault and query NotebookLM.",
 			});
 		}
 
 		for (const message of conversation.messages) {
-			const messageEl = this.messageListEl.createDiv({
+			if (renderVersion !== this.renderVersion || this.messageListEl !== messageListEl) {
+				return;
+			}
+
+			const messageEl = messageListEl.createDiv({
 				cls: `nlm-chat-message nlm-chat-${message.role}`,
 			});
-			messageEl.createDiv({ cls: "nlm-chat-message-body", text: message.text });
+			if (message.role === "assistant") {
+				const bodyEl = messageEl.createDiv({
+					cls: "nlm-chat-message-body nlm-chat-message-markdown",
+				});
+				try {
+					await MarkdownRenderer.render(this.app, message.text, bodyEl, "", this);
+				} catch {
+					bodyEl.setText(message.text);
+				}
+			} else {
+				messageEl.createDiv({ cls: "nlm-chat-message-body", text: message.text });
+			}
 			messageEl.createDiv({
 				cls: "nlm-chat-message-time",
 				text: new Date(message.at).toLocaleTimeString(),
 			});
 		}
 
-		if (this.busy) {
-			this.messageListEl.createDiv({ cls: "nlm-chat-pending", text: "NotebookLM is working..." });
+		if (renderVersion !== this.renderVersion || this.messageListEl !== messageListEl) {
+			return;
 		}
 
-		this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
+		if (this.busy) {
+			messageListEl.createDiv({ cls: "nlm-chat-pending", text: "NotebookLM is working..." });
+		}
+
+		messageListEl.scrollTop = messageListEl.scrollHeight;
 	}
 
 	private async sendMessage(): Promise<void> {

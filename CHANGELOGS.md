@@ -2,6 +2,15 @@
 
 All notable repository changes are documented here.
 
+## [0.2.0] - 2026-02-24
+
+### Changed
+
+- Updated chat UI for mixed message presentation:
+  - user questions remain speech bubbles
+  - NotebookLM responses render as markdown-formatted text blocks (no assistant bubble)
+- Improved assistant message readability for headings, lists, links, and other markdown output.
+
 ## [0.1.0] - 2026-02-24
 
 ### Added

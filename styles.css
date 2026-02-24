@@ -51,22 +51,40 @@
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
-	padding: 8px 10px;
-	border-radius: 10px;
-	white-space: pre-wrap;
-	line-height: 1.4;
+	line-height: 1.5;
 }
 
 .nlm-chat-user {
 	align-self: flex-end;
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
+	padding: 8px 10px;
+	border-radius: 12px;
+}
+
+.nlm-chat-user .nlm-chat-message-body {
+	white-space: pre-wrap;
+}
+
+.nlm-chat-user .nlm-chat-message-time {
+	align-self: flex-end;
 }
 
 .nlm-chat-assistant {
-	align-self: flex-start;
-	background: var(--background-secondary);
-	border: 1px solid var(--background-modifier-border);
+	align-self: stretch;
+	max-width: 100%;
+	padding: 0;
+	background: transparent;
+	border: 0;
+	color: var(--text-normal);
+}
+
+.nlm-chat-message-markdown > :first-child {
+	margin-top: 0;
+}
+
+.nlm-chat-message-markdown > :last-child {
+	margin-bottom: 0;
 }
 
 .nlm-chat-message-time {

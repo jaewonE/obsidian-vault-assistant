@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.1.0`
+Version: `0.2.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -18,6 +18,7 @@ The plugin provides a right-sidebar chat workflow:
 ## Features
 
 - Right sidebar chat view (single-tab operation)
+- User questions in speech bubbles with NotebookLM answers rendered as markdown text
 - `New` action for a fresh conversation context
 - `History` modal to reload prior conversations
 - Source registry with capacity control and eviction
