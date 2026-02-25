@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-vault-assistant",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"description": "Obsidian Desktop plugin integrating NotebookLM via notebooklm-mcp-cli",
 	"main": "main.js",
 	"type": "module",

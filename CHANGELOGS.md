@@ -2,6 +2,27 @@
 
 All notable repository changes are documented here.
 
+## [0.3.2] - 2026-02-25
+
+### Changed
+
+- BM25 indexing now supports persisted cache storage in plugin data and startup synchronization using markdown file metadata (`mtime`, `size`), reducing unnecessary full rebuilds.
+- BM25 synchronization behavior was refactored from full vault re-indexing to incremental/semi-incremental updates:
+  - added/modified markdown files are re-tokenized individually
+  - deleted markdown files are removed from postings
+  - unchanged markdown files are reused from cache
+- Source preparation logic now performs hash-based synchronization before reusing uploaded NotebookLM sources:
+  - if local content hash changed, the old remote source is replaced with a new upload
+  - if hash matches and path was effectively moved/renamed, source mapping is reassigned without re-upload
+- Added `source_id` alias-chain resolution so historical IDs can map to the latest active source IDs across sessions.
+- Added tests for BM25 cache hydration/incremental update behavior and source registry alias-chain/cached-index persistence.
+- Source preparation flow was refactored into a dedicated service module with add-first replacement ordering and remote-capacity-based eviction decisions.
+- MCP retry behavior now retries only idempotent tool calls on connection issues to avoid duplicate side effects on mutating operations.
+- Added bounded history source carry-over, runtime settings sanitization, and persistence compaction/alias pruning safeguards.
+- Added final algorithm documentation for v0.3.2 implementation details and traceability:
+  - `BM25_NOTEBOOKLM_ALGORITHMS_0.3.2.md`
+  - `BM25_NOTEBOOKLM_PIPELINE_0.3.2.md`
+
 ## [0.3.1] - 2026-02-25
 
 ### Changed

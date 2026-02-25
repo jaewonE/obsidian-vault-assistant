@@ -11,10 +11,20 @@ class SilentLogger {
 
 interface MockFile {
 	path: string;
+	stat: {
+		mtime: number;
+		size: number;
+	};
 }
 
 function createBm25(documents: Record<string, string>): BM25 {
-	const files: MockFile[] = Object.keys(documents).map((path) => ({ path }));
+	const files: MockFile[] = Object.entries(documents).map(([path, content]) => ({
+		path,
+		stat: {
+			mtime: 1,
+			size: content.length,
+		},
+	}));
 	const app = {
 		vault: {
 			getMarkdownFiles(): MockFile[] {
@@ -150,4 +160,235 @@ test("returns empty when query has no indexable text", async () => {
 	assert.equal(result.queryTokens.length, 0);
 	assert.equal(result.topResults.length, 0);
 	assert.equal(result.selected.length, 0);
+});
+
+test("can hydrate cached index without re-reading unchanged files", async () => {
+	const state = {
+		"algorithms/heapsort.md": { content: "heapsort algorithm", mtime: 10 },
+		"algorithms/quicksort.md": { content: "quicksort algorithm", mtime: 10 },
+	};
+	let readCount = 0;
+
+	const files: MockFile[] = Object.entries(state).map(([path, file]) => ({
+		path,
+		stat: {
+			mtime: file.mtime,
+			size: file.content.length,
+		},
+	}));
+
+	const app = {
+		vault: {
+			getMarkdownFiles(): MockFile[] {
+				return files;
+			},
+			async cachedRead(file: MockFile): Promise<string> {
+				readCount += 1;
+				return state[file.path as keyof typeof state].content;
+			},
+		},
+	};
+
+	const first = new BM25(app as never, new SilentLogger() as never);
+	await first.search("heapsort", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+	assert.equal(readCount, 2);
+
+	const cachedIndex = first.exportCachedIndex();
+	readCount = 0;
+
+	const second = new BM25(app as never, new SilentLogger() as never);
+	second.loadCachedIndex(cachedIndex);
+	await second.search("heapsort", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+	assert.equal(readCount, 0);
+});
+
+test("updates only modified files when index is dirty", async () => {
+	const state = {
+		"algorithms/heapsort.md": { content: "heapsort algorithm", mtime: 10 },
+		"algorithms/quicksort.md": { content: "quicksort algorithm", mtime: 10 },
+	};
+	let readCount = 0;
+
+	const files: MockFile[] = Object.entries(state).map(([path, file]) => ({
+		path,
+		stat: {
+			mtime: file.mtime,
+			size: file.content.length,
+		},
+	}));
+
+	const app = {
+		vault: {
+			getMarkdownFiles(): MockFile[] {
+				return files;
+			},
+			async cachedRead(file: MockFile): Promise<string> {
+				readCount += 1;
+				return state[file.path as keyof typeof state].content;
+			},
+		},
+	};
+
+	const bm25 = new BM25(app as never, new SilentLogger() as never);
+	await bm25.search("heapsort", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+	readCount = 0;
+
+	state["algorithms/heapsort.md"] = {
+		content: "updated heapsort explanation",
+		mtime: 11,
+	};
+	files[0].stat = {
+		mtime: 11,
+		size: state["algorithms/heapsort.md"].content.length,
+	};
+	bm25.markDirty();
+
+	await bm25.search("updated heapsort", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+	assert.equal(readCount, 1);
+});
+
+test("handles path-level deleted files without re-reading unchanged files", async () => {
+	const state: Record<string, { content: string; mtime: number }> = {
+		"notes/a.md": { content: "alpha heapsort", mtime: 10 },
+		"notes/b.md": { content: "beta quicksort", mtime: 10 },
+	};
+	let readCount = 0;
+
+	const files: MockFile[] = Object.entries(state).map(([path, file]) => ({
+		path,
+		stat: {
+			mtime: file.mtime,
+			size: file.content.length,
+		},
+	}));
+
+	const app = {
+		vault: {
+			getMarkdownFiles(): MockFile[] {
+				return files;
+			},
+			async cachedRead(file: MockFile): Promise<string> {
+				readCount += 1;
+				return state[file.path]?.content ?? "";
+			},
+		},
+	};
+
+	const bm25 = new BM25(app as never, new SilentLogger() as never);
+	await bm25.search("heapsort", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+	readCount = 0;
+
+	delete state["notes/a.md"];
+	files.splice(
+		files.findIndex((file) => file.path === "notes/a.md"),
+		1,
+	);
+	bm25.markPathDeleted("notes/a.md");
+
+	const result = await bm25.search("heapsort", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+
+	assert.equal(readCount, 0);
+	assert.equal(result.topResults.some((item) => item.path === "notes/a.md"), false);
+});
+
+test("handles path-level rename as delete+modify", async () => {
+	const state: Record<string, { content: string; mtime: number }> = {
+		"docs/old.md": { content: "rename token", mtime: 1 },
+	};
+	let readCount = 0;
+
+	const files: MockFile[] = Object.entries(state).map(([path, file]) => ({
+		path,
+		stat: {
+			mtime: file.mtime,
+			size: file.content.length,
+		},
+	}));
+
+	const app = {
+		vault: {
+			getMarkdownFiles(): MockFile[] {
+				return files;
+			},
+			async cachedRead(file: MockFile): Promise<string> {
+				readCount += 1;
+				return state[file.path]?.content ?? "";
+			},
+		},
+	};
+
+	const bm25 = new BM25(app as never, new SilentLogger() as never);
+	await bm25.search("rename", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+	readCount = 0;
+
+	state["docs/new.md"] = { content: "rename token", mtime: 2 };
+	delete state["docs/old.md"];
+	files.splice(
+		files.findIndex((file) => file.path === "docs/old.md"),
+		1,
+		{
+			path: "docs/new.md",
+			stat: {
+				mtime: 2,
+				size: state["docs/new.md"]?.content.length ?? 0,
+			},
+		},
+	);
+
+	bm25.markPathDeleted("docs/old.md");
+	bm25.markPathModified("docs/new.md");
+
+	const result = await bm25.search("rename", {
+		topN: 15,
+		cutoffRatio: 0.4,
+		minK: 3,
+		k1: 1.2,
+		b: 0.75,
+	});
+
+	assert.equal(readCount, 1);
+	assert.equal(result.topResults[0]?.path, "docs/new.md");
+	assert.equal(result.topResults.some((item) => item.path === "docs/old.md"), false);
 });

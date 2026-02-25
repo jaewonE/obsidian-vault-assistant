@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.3.1`
+Version: `0.3.2`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -96,11 +96,18 @@ npm run build
 
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/main.ts`: minimal entrypoint
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/NotebookLMPlugin.ts`: plugin lifecycle + orchestration
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/SourcePreparationService.ts`: source upload/reuse/replace/eviction algorithm service
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/historySourceIds.ts`: bounded history source carry-over selection logic
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/search/BM25.ts`: BM25 indexing/search logic
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/storage/PluginDataStore.ts`: persisted settings/history/source registry
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/ui/`: chat view, history modal, settings tab
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/logging/logger.ts`: debug-aware logging
+
+## Algorithm documentation
+
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_ALGORITHMS_0.3.2.md`: canonical algorithm and implementation documentation for BM25 retrieval, incremental index updates, NotebookLM source sync, alias handling, capacity/eviction, retry policy, and persistence compaction.
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_PIPELINE_0.3.2.md`: end-to-end requirement and behavior traceability baseline for the v0.3.2 pipeline.
 
 ## Implementation considerations (from AGENTS.md)
 

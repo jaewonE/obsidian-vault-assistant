@@ -6,6 +6,12 @@
 - Entry point: `main.ts` compiled to `main.js` and loaded by Obsidian.
 - Required release artifacts: `main.js`, `manifest.json`, and optional `styles.css`.
 
+## Project documentation (v0.3.2)
+
+- Algorithm/implementation reference: `BM25_NOTEBOOKLM_ALGORITHMS_0.3.2.md`
+- Pipeline requirements/traceability reference: `BM25_NOTEBOOKLM_PIPELINE_0.3.2.md`
+- When changing BM25 indexing/sync logic, source lifecycle logic, alias behavior, or retry/eviction rules, update both documents as part of the same change.
+
 ## Environment & tooling
 
 - Node.js: use current LTS (Node 18+ recommended).

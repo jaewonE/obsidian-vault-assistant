@@ -73,8 +73,24 @@ export interface SourceRegistryEntry {
 export interface SourceRegistryState {
 	byPath: Record<string, SourceRegistryEntry>;
 	bySourceId: Record<string, string>;
+	sourceIdAliases: Record<string, string>;
 	probation: string[];
 	protected: string[];
+}
+
+export interface BM25CachedDocumentState {
+	path: string;
+	length: number;
+	mtime: number;
+	size: number;
+	termFreq: Record<string, number>;
+}
+
+export interface BM25CachedIndexState {
+	schemaVersion: number;
+	averageDocumentLength: number;
+	updatedAt: string;
+	documents: Record<string, BM25CachedDocumentState>;
 }
 
 export interface NotebookLMPluginSettings {
@@ -91,6 +107,7 @@ export interface NotebookLMPluginSettings {
 export interface NotebookLMPluginData {
 	settings: NotebookLMPluginSettings;
 	sourceRegistry: SourceRegistryState;
+	bm25Index: BM25CachedIndexState | null;
 	conversationHistory: ConversationRecord[];
 }
 
@@ -140,6 +157,7 @@ export const DEFAULT_SETTINGS: NotebookLMPluginSettings = {
 export const DEFAULT_SOURCE_REGISTRY: SourceRegistryState = {
 	byPath: {},
 	bySourceId: {},
+	sourceIdAliases: {},
 	probation: [],
 	protected: [],
 };
@@ -147,5 +165,6 @@ export const DEFAULT_SOURCE_REGISTRY: SourceRegistryState = {
 export const DEFAULT_PLUGIN_DATA: NotebookLMPluginData = {
 	settings: DEFAULT_SETTINGS,
 	sourceRegistry: DEFAULT_SOURCE_REGISTRY,
+	bm25Index: null,
 	conversationHistory: [],
 };

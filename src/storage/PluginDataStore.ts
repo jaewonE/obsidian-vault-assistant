@@ -1,4 +1,6 @@
 import {
+	BM25CachedDocumentState,
+	BM25CachedIndexState,
 	BM25SelectionMetadata,
 	ConversationQueryMetadata,
 	ConversationRecord,
@@ -16,6 +18,20 @@ interface DataPersistence {
 	saveData(data: unknown): Promise<void>;
 }
 
+const SETTINGS_LIMITS = {
+	topN: { min: 1, max: 200 },
+	cutoffRatio: { min: 0, max: 1 },
+	minSourcesK: { min: 1, max: 50 },
+	k1: { min: 0, max: 5 },
+	b: { min: 0, max: 1 },
+	queryTimeoutSeconds: { min: 5, max: 600 },
+} as const;
+
+const MAX_CONVERSATION_HISTORY = 200;
+const MAX_QUERY_METADATA_PER_CONVERSATION = 200;
+const MAX_MESSAGES_PER_CONVERSATION = 400;
+const MAX_SOURCE_ALIAS_COUNT = 5000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -32,15 +48,39 @@ function getBoolean(value: unknown): boolean | undefined {
 	return typeof value === "boolean" ? value : undefined;
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+	return Math.min(max, Math.max(min, value));
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number, min: number, max: number): number {
+	const parsed = getNumber(value);
+	if (parsed === undefined) {
+		return fallback;
+	}
+
+	return clampNumber(Math.floor(parsed), min, max);
+}
+
+function normalizeBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+	const parsed = getNumber(value);
+	if (parsed === undefined) {
+		return fallback;
+	}
+
+	return clampNumber(parsed, min, max);
+}
+
 function cloneDefaults(): NotebookLMPluginData {
 	return {
 		settings: { ...DEFAULT_PLUGIN_DATA.settings },
 		sourceRegistry: {
 			byPath: {},
 			bySourceId: {},
+			sourceIdAliases: {},
 			probation: [],
 			protected: [],
 		},
+		bm25Index: null,
 		conversationHistory: [],
 	};
 }
@@ -53,12 +93,42 @@ function normalizeSettings(rawSettings: unknown): NotebookLMPluginSettings {
 	return {
 		debugMode: getBoolean(rawSettings.debugMode) ?? DEFAULT_SETTINGS.debugMode,
 		notebookId: getString(rawSettings.notebookId) ?? DEFAULT_SETTINGS.notebookId,
-		bm25TopN: getNumber(rawSettings.bm25TopN) ?? DEFAULT_SETTINGS.bm25TopN,
-		bm25CutoffRatio: getNumber(rawSettings.bm25CutoffRatio) ?? DEFAULT_SETTINGS.bm25CutoffRatio,
-		bm25MinSourcesK: getNumber(rawSettings.bm25MinSourcesK) ?? DEFAULT_SETTINGS.bm25MinSourcesK,
-		bm25k1: getNumber(rawSettings.bm25k1) ?? DEFAULT_SETTINGS.bm25k1,
-		bm25b: getNumber(rawSettings.bm25b) ?? DEFAULT_SETTINGS.bm25b,
-		queryTimeoutSeconds: getNumber(rawSettings.queryTimeoutSeconds) ?? DEFAULT_SETTINGS.queryTimeoutSeconds,
+		bm25TopN: normalizePositiveInteger(
+			rawSettings.bm25TopN,
+			DEFAULT_SETTINGS.bm25TopN,
+			SETTINGS_LIMITS.topN.min,
+			SETTINGS_LIMITS.topN.max,
+		),
+		bm25CutoffRatio: normalizeBoundedNumber(
+			rawSettings.bm25CutoffRatio,
+			DEFAULT_SETTINGS.bm25CutoffRatio,
+			SETTINGS_LIMITS.cutoffRatio.min,
+			SETTINGS_LIMITS.cutoffRatio.max,
+		),
+		bm25MinSourcesK: normalizePositiveInteger(
+			rawSettings.bm25MinSourcesK,
+			DEFAULT_SETTINGS.bm25MinSourcesK,
+			SETTINGS_LIMITS.minSourcesK.min,
+			SETTINGS_LIMITS.minSourcesK.max,
+		),
+		bm25k1: normalizeBoundedNumber(
+			rawSettings.bm25k1,
+			DEFAULT_SETTINGS.bm25k1,
+			SETTINGS_LIMITS.k1.min,
+			SETTINGS_LIMITS.k1.max,
+		),
+		bm25b: normalizeBoundedNumber(
+			rawSettings.bm25b,
+			DEFAULT_SETTINGS.bm25b,
+			SETTINGS_LIMITS.b.min,
+			SETTINGS_LIMITS.b.max,
+		),
+		queryTimeoutSeconds: normalizePositiveInteger(
+			rawSettings.queryTimeoutSeconds,
+			DEFAULT_SETTINGS.queryTimeoutSeconds,
+			SETTINGS_LIMITS.queryTimeoutSeconds.min,
+			SETTINGS_LIMITS.queryTimeoutSeconds.max,
+		),
 	};
 }
 
@@ -111,6 +181,67 @@ function normalizeScoredPathArray(value: unknown): BM25SelectionMetadata["select
 			return { path, score };
 		})
 		.filter((item): item is BM25SelectionMetadata["selected"][number] => item !== null);
+}
+
+function normalizeBM25CachedDocument(path: string, value: unknown): BM25CachedDocumentState | null {
+	if (!isRecord(value)) {
+		return null;
+	}
+
+	const length = getNumber(value.length);
+	const mtime = getNumber(value.mtime);
+	const size = getNumber(value.size);
+	const termFreqRaw = isRecord(value.termFreq) ? value.termFreq : null;
+	if (length === undefined || mtime === undefined || size === undefined || !termFreqRaw) {
+		return null;
+	}
+
+	const termFreq: Record<string, number> = {};
+	for (const [token, rawFrequency] of Object.entries(termFreqRaw)) {
+		const frequency = getNumber(rawFrequency);
+		if (!token || frequency === undefined || frequency <= 0) {
+			continue;
+		}
+		termFreq[token] = frequency;
+	}
+
+	return {
+		path,
+		length,
+		mtime,
+		size,
+		termFreq,
+	};
+}
+
+function normalizeBM25CachedIndex(value: unknown): BM25CachedIndexState | null {
+	if (!isRecord(value)) {
+		return null;
+	}
+
+	const schemaVersion = getNumber(value.schemaVersion);
+	const averageDocumentLength = getNumber(value.averageDocumentLength);
+	const updatedAt = getString(value.updatedAt);
+	const documentsRaw = isRecord(value.documents) ? value.documents : null;
+	if (schemaVersion === undefined || averageDocumentLength === undefined || !updatedAt || !documentsRaw) {
+		return null;
+	}
+
+	const documents: Record<string, BM25CachedDocumentState> = {};
+	for (const [path, rawDocument] of Object.entries(documentsRaw)) {
+		const normalized = normalizeBM25CachedDocument(path, rawDocument);
+		if (!normalized) {
+			continue;
+		}
+		documents[path] = normalized;
+	}
+
+	return {
+		schemaVersion,
+		averageDocumentLength,
+		updatedAt,
+		documents,
+	};
 }
 
 function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | null {
@@ -274,6 +405,9 @@ export class PluginDataStore {
 		const sourceRegistryRaw = isRecord(raw.sourceRegistry) ? raw.sourceRegistry : {};
 		const byPathRaw = isRecord(sourceRegistryRaw.byPath) ? sourceRegistryRaw.byPath : {};
 		const bySourceIdRaw = isRecord(sourceRegistryRaw.bySourceId) ? sourceRegistryRaw.bySourceId : {};
+		const sourceIdAliasesRaw = isRecord(sourceRegistryRaw.sourceIdAliases)
+			? sourceRegistryRaw.sourceIdAliases
+			: {};
 		const probationRaw = Array.isArray(sourceRegistryRaw.probation) ? sourceRegistryRaw.probation : [];
 		const protectedRaw = Array.isArray(sourceRegistryRaw.protected) ? sourceRegistryRaw.protected : [];
 
@@ -293,6 +427,15 @@ export class PluginDataStore {
 				continue;
 			}
 			loaded.sourceRegistry.bySourceId[sourceId] = path;
+		}
+
+		loaded.sourceRegistry.sourceIdAliases = {};
+		for (const [sourceId, aliasValue] of Object.entries(sourceIdAliasesRaw)) {
+			const alias = getString(aliasValue);
+			if (!sourceId || !alias || sourceId === alias) {
+				continue;
+			}
+			loaded.sourceRegistry.sourceIdAliases[sourceId] = alias;
 		}
 
 		loaded.sourceRegistry.probation = [];
@@ -318,12 +461,15 @@ export class PluginDataStore {
 			.map((entry) => normalizeConversationRecord(entry))
 			.filter((entry): entry is ConversationRecord => entry !== null)
 			.map((entry) => ({ ...entry }));
+		loaded.bm25Index = normalizeBM25CachedIndex(raw.bm25Index);
 
-		this.data = loaded;
-		this.cleanupQueues();
-	}
+			this.data = loaded;
+			this.cleanupQueues();
+			this.compactData();
+		}
 
 	async save(): Promise<void> {
+		this.compactData();
 		await this.persistence.saveData(this.data);
 	}
 
@@ -331,11 +477,20 @@ export class PluginDataStore {
 		return this.data.settings;
 	}
 
+	getBM25Index(): BM25CachedIndexState | null {
+		return this.data.bm25Index ? { ...this.data.bm25Index } : null;
+	}
+
+	setBM25Index(index: BM25CachedIndexState | null): void {
+		this.data.bm25Index = index;
+	}
+
 	updateSettings(patch: Partial<NotebookLMPluginSettings>): void {
-		this.data.settings = {
+		const merged = {
 			...this.data.settings,
 			...patch,
 		};
+		this.data.settings = normalizeSettings(merged);
 	}
 
 	getConversationHistory(): ConversationRecord[] {
@@ -376,7 +531,8 @@ export class PluginDataStore {
 	}
 
 	getSourcePathById(sourceId: string): string | null {
-		return this.data.sourceRegistry.bySourceId[sourceId] ?? null;
+		const resolvedSourceId = this.resolveSourceId(sourceId);
+		return this.data.sourceRegistry.bySourceId[resolvedSourceId] ?? null;
 	}
 
 	getActiveSourceCount(): number {
@@ -389,17 +545,27 @@ export class PluginDataStore {
 
 	reconcileSources(remoteSourceIds: Set<string>): void {
 		for (const entry of Object.values(this.data.sourceRegistry.byPath)) {
-			if (remoteSourceIds.has(entry.sourceId)) {
+			const resolvedSourceId = this.resolveSourceId(entry.sourceId);
+			if (remoteSourceIds.has(resolvedSourceId)) {
+				if (entry.sourceId !== resolvedSourceId) {
+					delete this.data.sourceRegistry.bySourceId[entry.sourceId];
+					entry.sourceId = resolvedSourceId;
+				}
+
 				entry.stale = false;
-				this.data.sourceRegistry.bySourceId[entry.sourceId] = entry.path;
+				this.data.sourceRegistry.bySourceId[resolvedSourceId] = entry.path;
 				continue;
 			}
 
 			entry.stale = true;
 			delete this.data.sourceRegistry.bySourceId[entry.sourceId];
+			if (resolvedSourceId !== entry.sourceId) {
+				delete this.data.sourceRegistry.bySourceId[resolvedSourceId];
+			}
 		}
 
 		this.cleanupQueues();
+		this.pruneUnreachableAliases();
 	}
 
 	upsertSource(params: { path: string; sourceId: string; title: string; contentHash?: string }): SourceRegistryEntry {
@@ -436,6 +602,54 @@ export class PluginDataStore {
 
 		this.cleanupQueues();
 		return nextEntry;
+	}
+
+	getSourceEntriesByContentHash(contentHash: string): SourceRegistryEntry[] {
+		if (!contentHash) {
+			return [];
+		}
+
+		return Object.values(this.data.sourceRegistry.byPath).filter((entry) => entry.contentHash === contentHash);
+	}
+
+	resolveSourceId(sourceId: string): string {
+		if (!sourceId) {
+			return sourceId;
+		}
+
+		const aliases = this.data.sourceRegistry.sourceIdAliases;
+		const seen = new Set<string>();
+		let current = sourceId;
+
+		while (!seen.has(current)) {
+			seen.add(current);
+			const alias = aliases[current];
+			if (!alias || alias === current) {
+				return current;
+			}
+			current = alias;
+		}
+
+		return current;
+	}
+
+	registerSourceAlias(previousSourceId: string, currentSourceId: string): void {
+		if (!previousSourceId || !currentSourceId) {
+			return;
+		}
+
+		const resolvedCurrentSourceId = this.resolveSourceId(currentSourceId);
+		if (previousSourceId === resolvedCurrentSourceId) {
+			return;
+		}
+
+		this.data.sourceRegistry.sourceIdAliases[previousSourceId] = resolvedCurrentSourceId;
+
+		for (const [sourceId, alias] of Object.entries(this.data.sourceRegistry.sourceIdAliases)) {
+			if (alias === previousSourceId) {
+				this.data.sourceRegistry.sourceIdAliases[sourceId] = resolvedCurrentSourceId;
+			}
+		}
 	}
 
 	markSourceUsed(path: string, protectedCap: number): void {
@@ -492,6 +706,36 @@ export class PluginDataStore {
 		this.removePathFromQueue(path, "probation");
 		this.removePathFromQueue(path, "protected");
 		return entry;
+	}
+
+	renameSourcePath(oldPath: string, newPath: string): SourceRegistryEntry | null {
+		if (!oldPath || !newPath || oldPath === newPath) {
+			return null;
+		}
+
+		const entry = this.data.sourceRegistry.byPath[oldPath];
+		if (!entry) {
+			return null;
+		}
+
+		const existingAtNewPath = this.data.sourceRegistry.byPath[newPath];
+		if (existingAtNewPath && existingAtNewPath.sourceId !== entry.sourceId) {
+			this.removeSourceByPath(newPath);
+		}
+
+		delete this.data.sourceRegistry.byPath[oldPath];
+		this.data.sourceRegistry.byPath[newPath] = {
+			...entry,
+			path: newPath,
+			title: newPath,
+		};
+		this.data.sourceRegistry.bySourceId[entry.sourceId] = newPath;
+
+		this.replacePathInQueue(oldPath, newPath, "probation");
+		this.replacePathInQueue(oldPath, newPath, "protected");
+		this.cleanupQueues();
+
+		return this.data.sourceRegistry.byPath[newPath] ?? null;
 	}
 
 	private enforceProtectedCap(protectedCap: number): void {
@@ -554,6 +798,103 @@ export class PluginDataStore {
 		}
 
 		this.data.sourceRegistry.probation = uniqProbation;
-		this.data.sourceRegistry.protected = uniqProtected;
+			this.data.sourceRegistry.protected = uniqProtected;
+		}
+
+	private compactData(): void {
+		this.pruneConversationHistory();
+		this.pruneUnreachableAliases();
+	}
+
+	private pruneConversationHistory(): void {
+		const sorted = [...this.data.conversationHistory].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		const trimmed = sorted.slice(0, MAX_CONVERSATION_HISTORY).map((conversation) => {
+			const messages = conversation.messages.slice(-MAX_MESSAGES_PER_CONVERSATION);
+			const queryMetadata = conversation.queryMetadata.slice(-MAX_QUERY_METADATA_PER_CONVERSATION);
+			return {
+				...conversation,
+				messages,
+				queryMetadata,
+			};
+		});
+		this.data.conversationHistory = trimmed;
+	}
+
+	private pruneUnreachableAliases(): void {
+		const aliases = this.data.sourceRegistry.sourceIdAliases;
+		const activeSourceIds = new Set<string>(Object.keys(this.data.sourceRegistry.bySourceId));
+		const historicalSourceIds = new Set<string>();
+		for (const entry of Object.values(this.data.sourceRegistry.byPath)) {
+			if (entry.sourceId) {
+				activeSourceIds.add(entry.sourceId);
+			}
+		}
+		for (const conversation of this.data.conversationHistory) {
+			for (const metadata of conversation.queryMetadata) {
+				for (const sourceId of metadata.selectedSourceIds) {
+					if (sourceId) {
+						historicalSourceIds.add(sourceId);
+					}
+				}
+				for (const scoredPath of metadata.bm25Selection.selected) {
+					if (scoredPath.sourceId) {
+						historicalSourceIds.add(scoredPath.sourceId);
+					}
+				}
+			}
+		}
+
+		const activeResolvedSourceIds = new Set<string>();
+		for (const sourceId of activeSourceIds) {
+			activeResolvedSourceIds.add(this.resolveSourceId(sourceId));
+		}
+
+		const rebuilt: Record<string, string> = {};
+		for (const [sourceId, alias] of Object.entries(aliases)) {
+			if (!alias || sourceId === alias) {
+				continue;
+			}
+
+			const resolvedSourceId = this.resolveSourceId(sourceId);
+			const shouldKeep =
+				activeResolvedSourceIds.has(resolvedSourceId) ||
+				historicalSourceIds.has(sourceId) ||
+				historicalSourceIds.has(resolvedSourceId);
+			if (!shouldKeep) {
+				continue;
+			}
+
+			rebuilt[sourceId] = this.resolveSourceId(alias);
+		}
+
+		// Guard against pathological growth from stale histories.
+		if (Object.keys(rebuilt).length > MAX_SOURCE_ALIAS_COUNT) {
+			const entries = Object.entries(rebuilt).slice(-MAX_SOURCE_ALIAS_COUNT);
+			this.data.sourceRegistry.sourceIdAliases = Object.fromEntries(entries);
+			return;
+		}
+
+		this.data.sourceRegistry.sourceIdAliases = rebuilt;
+	}
+
+	private replacePathInQueue(oldPath: string, newPath: string, segment: SourceSegment): void {
+		const queue = segment === "probation" ? this.data.sourceRegistry.probation : this.data.sourceRegistry.protected;
+		let replaced = false;
+		const updated = queue.map((path) => {
+			if (path !== oldPath) {
+				return path;
+			}
+			replaced = true;
+			return newPath;
+		});
+		if (!replaced) {
+			return;
+		}
+
+		if (segment === "probation") {
+			this.data.sourceRegistry.probation = updated;
+			return;
+		}
+		this.data.sourceRegistry.protected = updated;
 	}
 }

@@ -1,6 +1,8 @@
 import { Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { Logger } from "../logging/logger";
 import { NotebookLMMcpBinaryMissingError, NotebookLMMcpClient } from "../mcp/NotebookLMMcpClient";
+import { buildReusableSourceIds } from "./historySourceIds";
+import { ensureSourcesForPaths, JsonObject, SourcePreparationProgress } from "./SourcePreparationService";
 import { BM25 } from "../search/BM25";
 import { PluginDataStore } from "../storage/PluginDataStore";
 import {
@@ -17,11 +19,7 @@ import { ChatView } from "../ui/ChatView";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "../ui/constants";
 import { NotebookLMSettingTab } from "../ui/SettingsTab";
 
-interface JsonObject {
-	[key: string]: unknown;
-}
-
-function isRecord(value: unknown): value is JsonObject {
+function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
@@ -51,16 +49,18 @@ type NumericSettingKey =
 
 const NOTEBOOK_TITLE = "Obsidian Vault Notebook";
 const PROTECTED_CAPACITY_RATIO = 0.7;
+const MAX_REUSABLE_HISTORY_SOURCE_IDS = 40;
+
+const SETTINGS_LIMITS = {
+	topN: { min: 1, max: 200 },
+	cutoffRatio: { min: 0, max: 1 },
+	minSourcesK: { min: 1, max: 50 },
+	k1: { min: 0, max: 5 },
+	b: { min: 0, max: 1 },
+	queryTimeoutSeconds: { min: 5, max: 600 },
+} as const;
 
 type QueryStepKey = "search" | "upload" | "response";
-
-interface SourcePreparationProgress {
-	path: string;
-	index: number;
-	total: number;
-	action: "checking" | "uploading" | "ready";
-	uploaded: boolean;
-}
 
 export default class NotebookLMObsidianPlugin extends Plugin {
 	private store!: PluginDataStore;
@@ -98,6 +98,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 		this.logger = new Logger(() => this.settings.debugMode);
 		this.bm25 = new BM25(this.app, this.logger);
+		this.bm25.loadCachedIndex(this.store.getBM25Index());
 		this.mcpClient = new NotebookLMMcpClient(this.logger);
 
 		this.registerView(
@@ -145,7 +146,8 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	getSourceItemsForIds(sourceIds: string[]): QuerySourceItem[] {
 		const seen = new Set<string>();
 		const items: QuerySourceItem[] = [];
-		for (const sourceId of sourceIds) {
+		for (const rawSourceId of sourceIds) {
+			const sourceId = this.store.resolveSourceId(rawSourceId);
 			if (!sourceId || seen.has(sourceId)) {
 				continue;
 			}
@@ -220,16 +222,23 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			for (const scoredPath of metadata.bm25Selection.selected) {
 				pathsToEnsure.add(scoredPath.path);
 			}
+			for (const rawSourceId of metadata.selectedSourceIds) {
+				const resolvedSourceId = this.store.resolveSourceId(rawSourceId);
+				const resolvedPath = this.store.getSourcePathById(resolvedSourceId);
+				if (resolvedPath) {
+					pathsToEnsure.add(resolvedPath);
+				}
+			}
 		}
 
-		if (pathsToEnsure.size > 0) {
-			try {
-				await this.ensureNotebookReady();
-				await this.ensureSourcesForPaths([...pathsToEnsure], []);
-				await this.store.save();
-			} catch (error) {
-				this.logger.warn("Failed to ensure history conversation sources", getErrorMessage(error));
-			}
+			if (pathsToEnsure.size > 0) {
+				try {
+					const notebookId = await this.ensureNotebookReady();
+					await this.ensureSourcesForPaths(notebookId, [...pathsToEnsure], []);
+					await this.store.save();
+				} catch (error) {
+					this.logger.warn("Failed to ensure history conversation sources", getErrorMessage(error));
+				}
 		}
 
 		return conversation;
@@ -252,13 +261,14 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		this.store.saveConversation(conversation);
 		await this.store.save();
 
+		const safeSearchParams = this.getSafeBm25SearchParams();
 		const queryMetadata: ConversationQueryMetadata = {
 			at: userMessageTime,
 			bm25Selection: {
 				query: trimmedQuery,
-				topN: this.settings.bm25TopN,
-				cutoffRatio: this.settings.bm25CutoffRatio,
-				minK: this.settings.bm25MinSourcesK,
+				topN: safeSearchParams.topN,
+				cutoffRatio: safeSearchParams.cutoffRatio,
+				minK: safeSearchParams.minK,
 				top15: [],
 				selected: [],
 			},
@@ -299,13 +309,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 		try {
 			const notebookId = await this.ensureNotebookReady();
-			const bm25Result = await this.bm25.search(trimmedQuery, {
-				topN: this.settings.bm25TopN,
-				cutoffRatio: this.settings.bm25CutoffRatio,
-				minK: this.settings.bm25MinSourcesK,
-				k1: this.settings.bm25k1,
-				b: this.settings.bm25b,
-			});
+			const bm25Result = await this.bm25.search(trimmedQuery, safeSearchParams);
 
 			queryMetadata.bm25Selection.top15 = bm25Result.topResults.map((item) => ({
 				path: item.path,
@@ -355,12 +359,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				},
 			});
 
-			const uploadedPaths = new Set<string>();
-			const reusedPaths = new Set<string>();
-			const pathToSourceId = await this.ensureSourcesForPaths(
-				selectedPaths,
-				queryMetadata.evictions,
-				(sourceProgress) => {
+				const uploadedPaths = new Set<string>();
+				const reusedPaths = new Set<string>();
+				const pathToSourceId = await this.ensureSourcesForPaths(
+					notebookId,
+					selectedPaths,
+					queryMetadata.evictions,
+					(sourceProgress) => {
 					if (sourceProgress.action === "ready") {
 						if (sourceProgress.uploaded) {
 							uploadedPaths.add(sourceProgress.path);
@@ -431,12 +436,12 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${sourceIds.length}, session ${carriedFromHistory.length}).`,
 			});
 
-			const queryArgs: Record<string, unknown> = {
-				notebook_id: notebookId,
-				query: trimmedQuery,
-				source_ids: mergedSourceIds,
-				timeout: this.settings.queryTimeoutSeconds,
-			};
+				const queryArgs: Record<string, unknown> = {
+					notebook_id: notebookId,
+					query: trimmedQuery,
+					source_ids: mergedSourceIds,
+					timeout: this.getSafeQueryTimeoutSeconds(),
+				};
 			if (conversation.notebookConversationId) {
 				queryArgs.conversation_id = conversation.notebookConversationId;
 			}
@@ -504,6 +509,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		conversation.updatedAt = assistantMessageTime;
 		conversation.notebookId = this.settings.notebookId;
 		conversation.queryMetadata.push(queryMetadata);
+		this.store.setBM25Index(this.bm25.exportCachedIndex());
 		this.store.saveConversation(conversation);
 		try {
 			await this.store.save();
@@ -533,7 +539,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			await this.ensureMcpConnected();
 			const refreshResult = await this.mcpClient.callTool<JsonObject>("refresh_auth", {});
 			this.ensureToolSuccess("refresh_auth", refreshResult);
-			await this.mcpClient.callTool<JsonObject>("server_info", {});
+			await this.mcpClient.callTool<JsonObject>("server_info", {}, { idempotent: true });
 			await this.ensureNotebookReady();
 		} catch (error) {
 			this.logger.error("Refresh auth failed", getErrorMessage(error));
@@ -561,7 +567,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private async startMcpServer(): Promise<void> {
 		try {
 			await this.ensureMcpConnected();
-			await this.mcpClient.callTool<JsonObject>("server_info", {});
+			await this.mcpClient.callTool<JsonObject>("server_info", {}, { idempotent: true });
 			await this.ensureNotebookReady();
 		} catch (error) {
 			if (error instanceof NotebookLMMcpBinaryMissingError) {
@@ -595,9 +601,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		let notebookId = this.settings.notebookId;
 		if (notebookId) {
 			try {
-				const notebookResult = await this.mcpClient.callTool<JsonObject>("notebook_get", {
-					notebook_id: notebookId,
-				});
+				const notebookResult = await this.mcpClient.callTool<JsonObject>(
+					"notebook_get",
+					{
+						notebook_id: notebookId,
+					},
+					{ idempotent: true },
+				);
 				this.ensureToolSuccess("notebook_get", notebookResult);
 				this.updateRemoteSources(notebookResult);
 				this.store.reconcileSources(this.remoteSourceIds);
@@ -623,7 +633,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		this.store.updateSettings({ notebookId });
 		const notebookResult = await this.mcpClient.callTool<JsonObject>("notebook_get", {
 			notebook_id: notebookId,
-		});
+		}, { idempotent: true });
 		this.ensureToolSuccess("notebook_get", notebookResult);
 		this.updateRemoteSources(notebookResult);
 		this.store.reconcileSources(this.remoteSourceIds);
@@ -667,154 +677,104 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	}
 
 	private async ensureSourcesForPaths(
+		notebookId: string,
 		paths: string[],
 		evictions: SourceEvictionRecord[],
 		onProgress?: (progress: SourcePreparationProgress) => void,
 	): Promise<Record<string, string>> {
-		const notebookId = await this.ensureNotebookReady();
-		const pathToSourceId: Record<string, string> = {};
-		const protectedCapacity = this.getProtectedCapacity();
-		const total = paths.length;
-
-		for (let index = 0; index < paths.length; index += 1) {
-			const path = paths[index];
-			if (typeof path !== "string") {
-				continue;
-			}
-			const displayIndex = index + 1;
-			onProgress?.({
-				path,
-				index: displayIndex,
-				total,
-				action: "checking",
-				uploaded: false,
-			});
-
-			const existing = this.store.getSourceEntryByPath(path);
-			if (existing && !existing.stale && this.remoteSourceIds.has(existing.sourceId)) {
-				pathToSourceId[path] = existing.sourceId;
-				onProgress?.({
-					path,
-					index: displayIndex,
-					total,
-					action: "ready",
-					uploaded: false,
-				});
-				continue;
-			}
-
-			const file = this.app.vault.getAbstractFileByPath(path);
-			if (!(file instanceof TFile)) {
-				continue;
-			}
-
-			await this.evictUntilCapacity(evictions);
-
-			const content = await this.app.vault.cachedRead(file);
-			onProgress?.({
-				path,
-				index: displayIndex,
-				total,
-				action: "uploading",
-				uploaded: true,
-			});
-			const addResult = await this.mcpClient.callTool<JsonObject>("source_add", {
-				notebook_id: notebookId,
-				source_type: "text",
-				text: content,
-				title: path,
-				wait: true,
-			});
-			this.ensureToolSuccess("source_add", addResult);
-
-			const sourceId = this.extractSourceId(addResult);
-			if (!sourceId) {
-				throw new Error(`source_add for ${path} did not return source_id`);
-			}
-
-			this.store.upsertSource({
-				path,
-				sourceId,
-				title: path,
-				contentHash: this.hashText(content),
-			});
-			this.remoteSourceIds.add(sourceId);
-			pathToSourceId[path] = sourceId;
-			onProgress?.({
-				path,
-				index: displayIndex,
-				total,
-				action: "ready",
-				uploaded: true,
-			});
-		}
-
-		for (const path of paths) {
-			this.store.markSourceUsed(path, protectedCapacity);
-		}
-
-		return pathToSourceId;
+		return ensureSourcesForPaths(
+			{
+				notebookId,
+				paths,
+				evictions,
+				protectedCapacity: this.getProtectedCapacity(),
+				onProgress,
+			},
+			this.getSourcePreparationDependencies(),
+		);
 	}
 
-	private async evictUntilCapacity(evictions: SourceEvictionRecord[]): Promise<void> {
-		while (this.store.getActiveSourceCount() >= SOURCE_TARGET_CAPACITY) {
-			const candidatePath = this.store.getEvictionCandidatePath();
-			if (!candidatePath) {
-				break;
-			}
-
-			const candidate = this.store.getSourceEntryByPath(candidatePath);
-			if (!candidate) {
-				this.store.removeSourceByPath(candidatePath);
-				continue;
-			}
-
-			if (candidate.stale) {
-				this.store.removeSourceByPath(candidate.path);
-				continue;
-			}
-
-			let removed = false;
-			try {
-				const deleteResult = await this.mcpClient.callTool<JsonObject>("source_delete", {
-					source_id: candidate.sourceId,
-					confirm: true,
-				});
-				const failure = this.getToolFailure(deleteResult);
-				if (!failure) {
-					removed = true;
-				} else if (failure.toLowerCase().includes("not found")) {
-					removed = true;
-				} else {
-					throw new Error(failure);
+	private getSourcePreparationDependencies() {
+		return {
+			remoteSourceIds: this.remoteSourceIds,
+			callTool: <T>(name: string, args: Record<string, unknown>) =>
+				this.mcpClient.callTool<T>(name, args),
+			ensureToolSuccess: (toolName: string, toolResult: unknown) => this.ensureToolSuccess(toolName, toolResult),
+			extractSourceId: (toolResult: unknown) => this.extractSourceId(toolResult),
+			getToolFailure: (toolResult: unknown) => this.getToolFailure(toolResult),
+			resolveSourceId: (sourceId: string) => this.store.resolveSourceId(sourceId),
+			getSourceEntryByPath: (path: string) => this.store.getSourceEntryByPath(path),
+			upsertSource: (params: { path: string; sourceId: string; title: string; contentHash?: string }) =>
+				this.store.upsertSource(params),
+			registerSourceAlias: (previousSourceId: string, currentSourceId: string) =>
+				this.store.registerSourceAlias(previousSourceId, currentSourceId),
+			getSourceEntriesByContentHash: (contentHash: string) => this.store.getSourceEntriesByContentHash(contentHash),
+			markSourceUsed: (path: string, protectedCap: number) => this.store.markSourceUsed(path, protectedCap),
+			getEvictionCandidatePath: () => this.store.getEvictionCandidatePath(),
+			removeSourceByPath: (path: string) => this.store.removeSourceByPath(path),
+			readMarkdown: async (path: string) => {
+				const file = this.app.vault.getAbstractFileByPath(path);
+				if (!(file instanceof TFile)) {
+					return null;
 				}
-			} catch (error) {
-				if (getErrorMessage(error).toLowerCase().includes("not found")) {
-					removed = true;
-				} else {
-					throw error;
-				}
-			}
 
-			if (!removed) {
-				break;
-			}
-
-			this.store.removeSourceByPath(candidate.path);
-			this.remoteSourceIds.delete(candidate.sourceId);
-			const eviction: SourceEvictionRecord = {
-				path: candidate.path,
-				sourceId: candidate.sourceId,
-				evictedAt: new Date().toISOString(),
-				reason: "source-capacity-target",
-			};
-			evictions.push(eviction);
-			this.logger.debug("Evicted NotebookLM source", eviction);
-		}
+				return this.app.vault.cachedRead(file);
+			},
+			pathExists: (path: string) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
+			hashText: (content: string) => this.hashText(content),
+			logDebug: (message: string, payload?: unknown) => this.logger.debug(message, payload),
+			logWarn: (message: string, payload?: unknown) => this.logger.warn(message, payload),
+		};
 	}
 
 	private getProtectedCapacity(): number {
 		return Math.max(1, Math.floor(SOURCE_TARGET_CAPACITY * PROTECTED_CAPACITY_RATIO));
+	}
+
+	private getSafeBm25SearchParams(): {
+		topN: number;
+		cutoffRatio: number;
+		minK: number;
+		k1: number;
+		b: number;
+	} {
+		return {
+			topN: this.clampInteger(this.settings.bm25TopN, SETTINGS_LIMITS.topN.min, SETTINGS_LIMITS.topN.max),
+			cutoffRatio: this.clampNumber(
+				this.settings.bm25CutoffRatio,
+				SETTINGS_LIMITS.cutoffRatio.min,
+				SETTINGS_LIMITS.cutoffRatio.max,
+			),
+			minK: this.clampInteger(
+				this.settings.bm25MinSourcesK,
+				SETTINGS_LIMITS.minSourcesK.min,
+				SETTINGS_LIMITS.minSourcesK.max,
+			),
+			k1: this.clampNumber(this.settings.bm25k1, SETTINGS_LIMITS.k1.min, SETTINGS_LIMITS.k1.max),
+			b: this.clampNumber(this.settings.bm25b, SETTINGS_LIMITS.b.min, SETTINGS_LIMITS.b.max),
+		};
+	}
+
+	private getSafeQueryTimeoutSeconds(): number {
+		return this.clampInteger(
+			this.settings.queryTimeoutSeconds,
+			SETTINGS_LIMITS.queryTimeoutSeconds.min,
+			SETTINGS_LIMITS.queryTimeoutSeconds.max,
+		);
+	}
+
+	private clampInteger(value: number, min: number, max: number): number {
+		if (!Number.isFinite(value)) {
+			return min;
+		}
+		return Math.min(max, Math.max(min, Math.floor(value)));
+	}
+
+	private clampNumber(value: number, min: number, max: number): number {
+		if (!Number.isFinite(value)) {
+			return min;
+		}
+		return Math.min(max, Math.max(min, value));
 	}
 
 	private ensureToolSuccess(toolName: string, toolResult: unknown): void {
@@ -985,22 +945,12 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	}
 
 	private getConversationReusableSourceIds(conversation: ConversationRecord): string[] {
-		const reusableSourceIds: string[] = [];
-		const seen = new Set<string>();
-		for (const metadata of conversation.queryMetadata) {
-			for (const sourceId of metadata.selectedSourceIds) {
-				if (!sourceId || seen.has(sourceId)) {
-					continue;
-				}
-				if (!this.remoteSourceIds.has(sourceId)) {
-					continue;
-				}
-				seen.add(sourceId);
-				reusableSourceIds.push(sourceId);
-			}
-		}
-
-		return reusableSourceIds;
+		return buildReusableSourceIds({
+			queryMetadata: conversation.queryMetadata,
+			resolveSourceId: (sourceId: string) => this.store.resolveSourceId(sourceId),
+			remoteSourceIds: this.remoteSourceIds,
+			maxCount: MAX_REUSABLE_HISTORY_SOURCE_IDS,
+		});
 	}
 
 	private getFileTitleFromPath(path: string): string {
@@ -1019,22 +969,65 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	}
 
 	private registerVaultEvents(): void {
-		this.registerEvent(this.app.vault.on("modify", (file: TAbstractFile) => this.markBm25Dirty(file)));
-		this.registerEvent(this.app.vault.on("create", (file: TAbstractFile) => this.markBm25Dirty(file)));
-		this.registerEvent(this.app.vault.on("delete", (file: TAbstractFile) => this.markBm25Dirty(file)));
+		this.registerEvent(this.app.vault.on("modify", (file: TAbstractFile) => this.handleVaultModifyOrCreate(file)));
+		this.registerEvent(this.app.vault.on("create", (file: TAbstractFile) => this.handleVaultModifyOrCreate(file)));
+		this.registerEvent(this.app.vault.on("delete", (file: TAbstractFile) => this.handleVaultDelete(file)));
 		this.registerEvent(
-			this.app.vault.on("rename", (file: TAbstractFile) => {
-				this.markBm25Dirty(file);
+			this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
+				this.handleVaultRename(file, oldPath);
 			}),
 		);
 	}
 
-	private markBm25Dirty(file: TAbstractFile): void {
+	private handleVaultModifyOrCreate(file: TAbstractFile): void {
 		if (!(file instanceof TFile) || file.extension !== "md") {
 			return;
 		}
 
-		this.bm25.markDirty();
+		this.bm25.markPathModified(file.path);
+	}
+
+	private handleVaultDelete(file: TAbstractFile): void {
+		if (!(file instanceof TFile) || file.extension !== "md") {
+			return;
+		}
+
+		this.bm25.markPathDeleted(file.path);
+	}
+
+	private handleVaultRename(file: TAbstractFile, oldPath: string): void {
+		if (!(file instanceof TFile) || !oldPath || oldPath === file.path) {
+			return;
+		}
+
+		const oldIsMarkdown = oldPath.toLowerCase().endsWith(".md");
+		const newIsMarkdown = file.extension === "md";
+		if (oldIsMarkdown) {
+			this.bm25.markPathDeleted(oldPath);
+		}
+		if (newIsMarkdown) {
+			this.bm25.markPathModified(file.path);
+		}
+
+		if (!oldIsMarkdown && !newIsMarkdown) {
+			return;
+		}
+
+		if (oldIsMarkdown && newIsMarkdown) {
+			const renamed = this.store.renameSourcePath(oldPath, file.path);
+			if (renamed) {
+				void this.store.save();
+			}
+			return;
+		}
+
+		if (oldIsMarkdown && !newIsMarkdown) {
+			const removed = this.store.removeSourceByPath(oldPath);
+			if (removed) {
+				void this.store.save();
+			}
+			return;
+		}
 	}
 
 	private async activateChatView(): Promise<void> {

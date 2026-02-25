@@ -16,6 +16,11 @@ interface JsonObject {
 	[key: string]: unknown;
 }
 
+interface ToolCallOptions {
+	idempotent?: boolean;
+	retryOnConnectionIssue?: boolean;
+}
+
 function isRecord(value: unknown): value is JsonObject {
 	return typeof value === "object" && value !== null;
 }
@@ -82,7 +87,7 @@ export class NotebookLMMcpClient {
 		this.logger.debug("MCP server subprocess stopped");
 	}
 
-	async callTool<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
+	async callTool<T>(name: string, args: Record<string, unknown> = {}, options: ToolCallOptions = {}): Promise<T> {
 		const invoke = async (): Promise<T> => {
 			await this.connectIfNeeded();
 			if (!this.client) {
@@ -103,7 +108,11 @@ export class NotebookLMMcpClient {
 				throw error;
 			}
 
-			if (!this.isConnectionIssue(error)) {
+			const canRetry =
+				(options.retryOnConnectionIssue ?? true) &&
+				(options.idempotent ?? false) &&
+				this.isConnectionIssue(error);
+			if (!canRetry) {
 				throw error;
 			}
 
