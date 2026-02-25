@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.2.2`
+Version: `0.3.1`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 

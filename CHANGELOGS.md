@@ -2,6 +2,13 @@
 
 All notable repository changes are documented here.
 
+## [0.3.1] - 2026-02-25
+
+### Changed
+
+- Improved markdown table readability in chat answers by rendering visible borders for all table cells (`th`, `td`) and table outer edges.
+- Added a configurable table border color CSS variable (`--nlm-table-border-color`) with a gray default fallback.
+
 ## [0.2.2] - 2026-02-24
 
 ### Changed

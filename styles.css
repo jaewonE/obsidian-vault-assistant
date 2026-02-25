@@ -3,6 +3,10 @@
 	height: 100%;
 }
 
+.nlm-chat-view {
+	--nlm-table-border-color: var(--color-base-40, var(--background-modifier-border));
+}
+
 .nlm-chat-root {
 	display: flex;
 	flex-direction: column;
@@ -201,6 +205,22 @@
 
 .nlm-chat-message-markdown > :last-child {
 	margin-bottom: 0;
+}
+
+.nlm-chat-message-markdown table {
+	width: 100%;
+	border-collapse: collapse;
+	border: 1px solid var(--nlm-table-border-color);
+}
+
+.nlm-chat-message-markdown th,
+.nlm-chat-message-markdown td {
+	border: 1px solid var(--nlm-table-border-color);
+	padding: 6px 8px;
+}
+
+.nlm-chat-message-markdown thead th {
+	background: var(--background-secondary);
 }
 
 .nlm-chat-message-time {
