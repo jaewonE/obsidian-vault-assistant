@@ -32,6 +32,15 @@ function getErrorMessage(error: unknown): string {
 	return String(error);
 }
 
+function summarizeTokens(tokens: string[], max = 5): string {
+	if (tokens.length <= max) {
+		return tokens.join(", ");
+	}
+
+	const listed = tokens.slice(0, max).join(", ");
+	return `${listed}, +${tokens.length - max} more`;
+}
+
 type NumericSettingKey =
 	| "bm25TopN"
 	| "bm25CutoffRatio"
@@ -308,7 +317,21 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			}));
 
 			if (bm25Result.selected.length === 0) {
-				throw new Error("No markdown files available to query.");
+				if (bm25Result.queryTokens.length === 0) {
+					throw new Error(
+						"No searchable tokens were found in your query after normalization. Try adding text keywords.",
+					);
+				}
+
+				if (bm25Result.matchedTokens.length === 0) {
+					throw new Error(
+						`No lexical match in vault notes for tokens: ${summarizeTokens(bm25Result.queryTokens)}.`,
+					);
+				}
+
+				throw new Error(
+					`No BM25 candidates scored above zero. Matched tokens: ${summarizeTokens(bm25Result.matchedTokens)}.`,
+				);
 			}
 
 			const selectedPaths = bm25Result.selected.map((item) => item.path);
@@ -405,7 +428,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					response: "active",
 				},
 				uploadDetail: `Step 1 complete: prepared ${newlyPreparedCount} new source${newlyPreparedCount === 1 ? "" : "s"} (reused ${reusedFromSelectionCount} from current selection).`,
-				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${sourceIds.length}, history ${carriedFromHistory.length}).`,
+				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${sourceIds.length}, session ${carriedFromHistory.length}).`,
 			});
 
 			const queryArgs: Record<string, unknown> = {
