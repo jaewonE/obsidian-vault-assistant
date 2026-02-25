@@ -8,6 +8,8 @@ import {
 	ConversationRecord,
 	DEFAULT_SETTINGS,
 	NotebookLMPluginSettings,
+	QueryProgressState,
+	QuerySourceItem,
 	SOURCE_TARGET_CAPACITY,
 	SourceEvictionRecord,
 } from "../types";
@@ -41,6 +43,16 @@ type NumericSettingKey =
 const NOTEBOOK_TITLE = "Obsidian Vault Notebook";
 const PROTECTED_CAPACITY_RATIO = 0.7;
 
+type QueryStepKey = "search" | "upload" | "response";
+
+interface SourcePreparationProgress {
+	path: string;
+	index: number;
+	total: number;
+	action: "checking" | "uploading" | "ready";
+	uploaded: boolean;
+}
+
 export default class NotebookLMObsidianPlugin extends Plugin {
 	private store!: PluginDataStore;
 	private logger!: Logger;
@@ -48,9 +60,23 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private mcpClient!: NotebookLMMcpClient;
 	private activeConversationId: string | null = null;
 	private remoteSourceIds = new Set<string>();
+	private queryProgress: QueryProgressState | null = null;
+	private queryProgressListeners = new Set<(progress: QueryProgressState | null) => void>();
 
 	get settings(): NotebookLMPluginSettings {
 		return this.store.getSettings();
+	}
+
+	getQueryProgress(): QueryProgressState | null {
+		return this.queryProgress;
+	}
+
+	onQueryProgressChange(listener: (progress: QueryProgressState | null) => void): () => void {
+		this.queryProgressListeners.add(listener);
+		listener(this.queryProgress);
+		return () => {
+			this.queryProgressListeners.delete(listener);
+		};
 	}
 
 	async onload(): Promise<void> {
@@ -105,6 +131,42 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 	getConversationHistory(): ConversationRecord[] {
 		return this.store.getConversationHistory();
+	}
+
+	getSourceItemsForIds(sourceIds: string[]): QuerySourceItem[] {
+		const seen = new Set<string>();
+		const items: QuerySourceItem[] = [];
+		for (const sourceId of sourceIds) {
+			if (!sourceId || seen.has(sourceId)) {
+				continue;
+			}
+			seen.add(sourceId);
+
+			const path = this.store.getSourcePathById(sourceId);
+			if (!path) {
+				continue;
+			}
+
+			items.push({
+				sourceId,
+				path,
+				title: this.getFileTitleFromPath(path),
+			});
+		}
+
+		return items;
+	}
+
+	async openSourceInNewTab(path: string): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) {
+			new Notice(`Source file not found in vault: ${path}`);
+			return;
+		}
+
+		const leaf = this.app.workspace.getLeaf("tab");
+		await leaf.openFile(file, { active: true });
+		this.app.workspace.setActiveLeaf(leaf, { focus: true });
 	}
 
 	getActiveConversation(): ConversationRecord {
@@ -196,6 +258,35 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		};
 
 		let assistantResponse = "";
+		let currentStep: QueryStepKey = "search";
+		let progressState: QueryProgressState = {
+			steps: {
+				search: "active",
+				upload: "pending",
+				response: "pending",
+			},
+			searchDetail: "Searching vault notes with BM25 and selecting documents...",
+			uploadDetail: "Waiting for document selection...",
+			responseDetail: "Waiting for source preparation...",
+			upload: {
+				total: 0,
+				currentIndex: 0,
+				currentPath: null,
+				uploadedCount: 0,
+				reusedCount: 0,
+			},
+		};
+		this.setQueryProgress(progressState);
+
+		const updateProgress = (patch: Partial<QueryProgressState>): void => {
+			progressState = {
+				...progressState,
+				...patch,
+				steps: patch.steps ?? progressState.steps,
+				upload: patch.upload ?? progressState.upload,
+			};
+			this.setQueryProgress(progressState);
+		};
 
 		try {
 			const notebookId = await this.ensureNotebookReady();
@@ -220,9 +311,61 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				throw new Error("No markdown files available to query.");
 			}
 
+			const selectedPaths = bm25Result.selected.map((item) => item.path);
+			const selectedCount = selectedPaths.length;
+			currentStep = "upload";
+			updateProgress({
+				steps: {
+					search: "done",
+					upload: "active",
+					response: "pending",
+				},
+				searchDetail: `BM25 selected ${selectedCount} source${selectedCount === 1 ? "" : "s"} for this question.`,
+				uploadDetail: `Preparing ${selectedCount} selected document${selectedCount === 1 ? "" : "s"}...`,
+				responseDetail: "Waiting for uploads to finish...",
+				upload: {
+					total: selectedCount,
+					currentIndex: 0,
+					currentPath: null,
+					uploadedCount: 0,
+					reusedCount: 0,
+				},
+			});
+
+			const uploadedPaths = new Set<string>();
+			const reusedPaths = new Set<string>();
 			const pathToSourceId = await this.ensureSourcesForPaths(
-				bm25Result.selected.map((item) => item.path),
+				selectedPaths,
 				queryMetadata.evictions,
+				(sourceProgress) => {
+					if (sourceProgress.action === "ready") {
+						if (sourceProgress.uploaded) {
+							uploadedPaths.add(sourceProgress.path);
+						} else {
+							reusedPaths.add(sourceProgress.path);
+						}
+					}
+
+					let uploadDetail = `Checking (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`;
+					if (sourceProgress.action === "uploading") {
+						uploadDetail = `Uploading (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`;
+					} else if (sourceProgress.action === "ready") {
+						uploadDetail = sourceProgress.uploaded
+							? `Uploaded (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`
+							: `Already uploaded (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`;
+					}
+
+					updateProgress({
+						uploadDetail,
+						upload: {
+							total: sourceProgress.total,
+							currentIndex: sourceProgress.index,
+							currentPath: sourceProgress.path,
+							uploadedCount: uploadedPaths.size,
+							reusedCount: reusedPaths.size,
+						},
+					});
+				},
 			);
 
 			queryMetadata.bm25Selection.selected = bm25Result.selected.map((item) => ({
@@ -239,12 +382,36 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				throw new Error("Failed to prepare NotebookLM sources for this query.");
 			}
 
-			queryMetadata.selectedSourceIds = sourceIds;
+			const historicalSourceIds = this.getConversationReusableSourceIds(conversation);
+			const sourceIdsSet = new Set(sourceIds);
+			const carriedFromHistory = historicalSourceIds.filter((sourceId) => !sourceIdsSet.has(sourceId));
+			const mergedSourceIds = [...new Set([...historicalSourceIds, ...sourceIds])];
+			const newlyPreparedCount = uploadedPaths.size;
+			const reusedFromSelectionCount = sourceIds.length - newlyPreparedCount;
+			const totalQuerySourceCount = mergedSourceIds.length;
+			queryMetadata.selectedSourceIds = mergedSourceIds;
+			queryMetadata.sourceSummary = {
+				bm25SelectedCount: sourceIds.length,
+				newlyPreparedCount,
+				reusedFromSelectionCount,
+				carriedFromHistoryCount: carriedFromHistory.length,
+				totalQuerySourceCount,
+			};
+			currentStep = "response";
+			updateProgress({
+				steps: {
+					search: "done",
+					upload: "done",
+					response: "active",
+				},
+				uploadDetail: `Step 1 complete: prepared ${newlyPreparedCount} new source${newlyPreparedCount === 1 ? "" : "s"} (reused ${reusedFromSelectionCount} from current selection).`,
+				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${sourceIds.length}, history ${carriedFromHistory.length}).`,
+			});
 
 			const queryArgs: Record<string, unknown> = {
 				notebook_id: notebookId,
 				query: trimmedQuery,
-				source_ids: sourceIds,
+				source_ids: mergedSourceIds,
 				timeout: this.settings.queryTimeoutSeconds,
 			};
 			if (conversation.notebookConversationId) {
@@ -274,10 +441,35 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			if (conversationId) {
 				conversation.notebookConversationId = conversationId;
 			}
+			updateProgress({
+				steps: {
+					search: "done",
+					upload: "done",
+					response: "done",
+				},
+				responseDetail: "NotebookLM response received.",
+				upload: {
+					...progressState.upload,
+					currentPath: null,
+				},
+			});
 		} catch (error) {
 			const message = this.userFacingError(error);
 			assistantResponse = message;
 			queryMetadata.errors = [getErrorMessage(error)];
+
+			updateProgress({
+				steps: {
+					...progressState.steps,
+					[currentStep]: "failed",
+				},
+				searchDetail:
+					currentStep === "search" ? `Failed: ${message}` : progressState.searchDetail,
+				uploadDetail:
+					currentStep === "upload" ? `Failed: ${message}` : progressState.uploadDetail,
+				responseDetail:
+					currentStep === "response" ? `Failed: ${message}` : progressState.responseDetail,
+			});
 		}
 
 		const assistantMessageTime = new Date().toISOString();
@@ -290,7 +482,11 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		conversation.notebookId = this.settings.notebookId;
 		conversation.queryMetadata.push(queryMetadata);
 		this.store.saveConversation(conversation);
-		await this.store.save();
+		try {
+			await this.store.save();
+		} finally {
+			this.setQueryProgress(null);
+		}
 	}
 
 	async setDebugMode(enabled: boolean): Promise<void> {
@@ -326,6 +522,17 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	async updateNumericSetting(key: NumericSettingKey, value: number): Promise<void> {
 		this.store.updateSettings({ [key]: value });
 		await this.store.save();
+	}
+
+	private setQueryProgress(progress: QueryProgressState | null): void {
+		this.queryProgress = progress;
+		for (const listener of this.queryProgressListeners) {
+			try {
+				listener(progress);
+			} catch {
+				// Ignore listener failures to keep query execution stable.
+			}
+		}
 	}
 
 	private async startMcpServer(): Promise<void> {
@@ -439,15 +646,37 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private async ensureSourcesForPaths(
 		paths: string[],
 		evictions: SourceEvictionRecord[],
+		onProgress?: (progress: SourcePreparationProgress) => void,
 	): Promise<Record<string, string>> {
 		const notebookId = await this.ensureNotebookReady();
 		const pathToSourceId: Record<string, string> = {};
 		const protectedCapacity = this.getProtectedCapacity();
+		const total = paths.length;
 
-		for (const path of paths) {
+		for (let index = 0; index < paths.length; index += 1) {
+			const path = paths[index];
+			if (typeof path !== "string") {
+				continue;
+			}
+			const displayIndex = index + 1;
+			onProgress?.({
+				path,
+				index: displayIndex,
+				total,
+				action: "checking",
+				uploaded: false,
+			});
+
 			const existing = this.store.getSourceEntryByPath(path);
 			if (existing && !existing.stale && this.remoteSourceIds.has(existing.sourceId)) {
 				pathToSourceId[path] = existing.sourceId;
+				onProgress?.({
+					path,
+					index: displayIndex,
+					total,
+					action: "ready",
+					uploaded: false,
+				});
 				continue;
 			}
 
@@ -459,6 +688,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			await this.evictUntilCapacity(evictions);
 
 			const content = await this.app.vault.cachedRead(file);
+			onProgress?.({
+				path,
+				index: displayIndex,
+				total,
+				action: "uploading",
+				uploaded: true,
+			});
 			const addResult = await this.mcpClient.callTool<JsonObject>("source_add", {
 				notebook_id: notebookId,
 				source_type: "text",
@@ -481,6 +717,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			});
 			this.remoteSourceIds.add(sourceId);
 			pathToSourceId[path] = sourceId;
+			onProgress?.({
+				path,
+				index: displayIndex,
+				total,
+				action: "ready",
+				uploaded: true,
+			});
 		}
 
 		for (const path of paths) {
@@ -716,6 +959,31 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private isConversationContextError(message: string): boolean {
 		const lowered = message.toLowerCase();
 		return lowered.includes("conversation") && (lowered.includes("not found") || lowered.includes("invalid"));
+	}
+
+	private getConversationReusableSourceIds(conversation: ConversationRecord): string[] {
+		const reusableSourceIds: string[] = [];
+		const seen = new Set<string>();
+		for (const metadata of conversation.queryMetadata) {
+			for (const sourceId of metadata.selectedSourceIds) {
+				if (!sourceId || seen.has(sourceId)) {
+					continue;
+				}
+				if (!this.remoteSourceIds.has(sourceId)) {
+					continue;
+				}
+				seen.add(sourceId);
+				reusableSourceIds.push(sourceId);
+			}
+		}
+
+		return reusableSourceIds;
+	}
+
+	private getFileTitleFromPath(path: string): string {
+		const parts = path.split("/");
+		const lastPart = parts[parts.length - 1];
+		return lastPart?.trim().length ? lastPart : path;
 	}
 
 	private hashText(value: string): string {

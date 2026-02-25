@@ -6,6 +6,7 @@ import {
 	DEFAULT_SETTINGS,
 	NotebookLMPluginData,
 	NotebookLMPluginSettings,
+	QuerySourceSummary,
 	SourceRegistryEntry,
 	SourceSegment,
 } from "../types";
@@ -135,6 +136,30 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 	const selected = normalizeScoredPathArray(bm25SelectionRaw.selected);
 	const selectedSourceIdsRaw = Array.isArray(value.selectedSourceIds) ? value.selectedSourceIds : [];
 	const evictionsRaw = Array.isArray(value.evictions) ? value.evictions : [];
+	const sourceSummaryRaw = isRecord(value.sourceSummary) ? value.sourceSummary : null;
+	let sourceSummary: QuerySourceSummary | undefined;
+	if (sourceSummaryRaw) {
+		const bm25SelectedCount = getNumber(sourceSummaryRaw.bm25SelectedCount);
+		const newlyPreparedCount = getNumber(sourceSummaryRaw.newlyPreparedCount);
+		const reusedFromSelectionCount = getNumber(sourceSummaryRaw.reusedFromSelectionCount);
+		const carriedFromHistoryCount = getNumber(sourceSummaryRaw.carriedFromHistoryCount);
+		const totalQuerySourceCount = getNumber(sourceSummaryRaw.totalQuerySourceCount);
+		if (
+			bm25SelectedCount !== undefined &&
+			newlyPreparedCount !== undefined &&
+			reusedFromSelectionCount !== undefined &&
+			carriedFromHistoryCount !== undefined &&
+			totalQuerySourceCount !== undefined
+		) {
+			sourceSummary = {
+				bm25SelectedCount,
+				newlyPreparedCount,
+				reusedFromSelectionCount,
+				carriedFromHistoryCount,
+				totalQuerySourceCount,
+			};
+		}
+	}
 
 	return {
 		at,
@@ -167,6 +192,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 		errors: Array.isArray(value.errors)
 			? value.errors.filter((item): item is string => typeof item === "string")
 			: undefined,
+		sourceSummary,
 	};
 }
 

@@ -28,11 +28,20 @@ export interface SourceEvictionRecord {
 	reason: string;
 }
 
+export interface QuerySourceSummary {
+	bm25SelectedCount: number;
+	newlyPreparedCount: number;
+	reusedFromSelectionCount: number;
+	carriedFromHistoryCount: number;
+	totalQuerySourceCount: number;
+}
+
 export interface ConversationQueryMetadata {
 	at: string;
 	bm25Selection: BM25SelectionMetadata;
 	selectedSourceIds: string[];
 	evictions: SourceEvictionRecord[];
+	sourceSummary?: QuerySourceSummary;
 	errors?: string[];
 }
 
@@ -83,6 +92,34 @@ export interface NotebookLMPluginData {
 	settings: NotebookLMPluginSettings;
 	sourceRegistry: SourceRegistryState;
 	conversationHistory: ConversationRecord[];
+}
+
+export type QueryProgressStepState = "pending" | "active" | "done" | "failed";
+
+export interface QueryUploadProgress {
+	total: number;
+	currentIndex: number;
+	currentPath: string | null;
+	uploadedCount: number;
+	reusedCount: number;
+}
+
+export interface QueryProgressState {
+	steps: {
+		search: QueryProgressStepState;
+		upload: QueryProgressStepState;
+		response: QueryProgressStepState;
+	};
+	searchDetail: string;
+	uploadDetail: string;
+	responseDetail: string;
+	upload: QueryUploadProgress;
+}
+
+export interface QuerySourceItem {
+	sourceId: string;
+	path: string;
+	title: string;
 }
 
 export const MAX_NOTEBOOK_SOURCES = 300;

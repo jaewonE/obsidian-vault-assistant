@@ -2,6 +2,28 @@
 
 All notable repository changes are documented here.
 
+## [0.2.2] - 2026-02-24
+
+### Changed
+
+- Reused source context within the same conversation tab by carrying forward previously used `source_ids` into each new NotebookLM query.
+- Added a source list UI at the top of each assistant answer:
+  - toggle button to show/hide sources used for that answer
+  - clickable source titles (for example, `algorithm.md`) that open the source note in a new Obsidian tab
+- Added per-query source summary fields and UI lines for:
+  - step 1: newly prepared sources for the current question
+  - step 2: total sources used for final query context (current + history carry-over)
+
+## [0.2.1] - 2026-02-24
+
+### Changed
+
+- Added live query progress UI with three explicit steps:
+  - BM25 search and document selection
+  - selected document upload/preparation
+  - NotebookLM response wait
+- Added per-document progress detail for step 2, including the currently processed file path and upload/reuse counts.
+
 ## [0.2.0] - 2026-02-24
 
 ### Changed

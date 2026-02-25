@@ -1,5 +1,11 @@
 import { ButtonComponent, ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type NotebookLMPlugin from "../main";
+import type {
+	ConversationQueryMetadata,
+	QueryProgressState,
+	QueryProgressStepState,
+	QuerySourceItem,
+} from "../types";
 import { HistoryModal } from "./HistoryModal";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "./constants";
 
@@ -12,6 +18,9 @@ export class ChatView extends ItemView {
 	private historyButton: ButtonComponent | null = null;
 	private busy = false;
 	private renderVersion = 0;
+	private queryProgress: QueryProgressState | null = null;
+	private unsubscribeProgress: (() => void) | null = null;
+	private sourceListExpandedByMessageKey = new Map<string, boolean>();
 
 	constructor(leaf: WorkspaceLeaf, plugin: NotebookLMPlugin) {
 		super(leaf);
@@ -31,11 +40,19 @@ export class ChatView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
+		this.queryProgress = this.plugin.getQueryProgress();
+		this.unsubscribeProgress?.();
+		this.unsubscribeProgress = this.plugin.onQueryProgressChange((progress) => {
+			this.queryProgress = progress;
+			this.renderMessages();
+		});
 		this.renderLayout();
 		this.renderMessages();
 	}
 
 	async onClose(): Promise<void> {
+		this.unsubscribeProgress?.();
+		this.unsubscribeProgress = null;
 		this.contentEl.empty();
 	}
 
@@ -87,19 +104,24 @@ export class ChatView extends ItemView {
 			});
 	}
 
-	private renderMessages(): void {
+	private renderMessages(preserveScrollPosition = false): void {
 		const currentRenderVersion = ++this.renderVersion;
-		void this.renderMessagesInternal(currentRenderVersion);
+		void this.renderMessagesInternal(currentRenderVersion, preserveScrollPosition);
 	}
 
-	private async renderMessagesInternal(renderVersion: number): Promise<void> {
+	private async renderMessagesInternal(
+		renderVersion: number,
+		preserveScrollPosition: boolean,
+	): Promise<void> {
 		if (!this.messageListEl) {
 			return;
 		}
 
 		const messageListEl = this.messageListEl;
+		const previousScrollTop = messageListEl.scrollTop;
 		messageListEl.empty();
 		const conversation = this.plugin.getActiveConversation();
+		let assistantMessageIndex = 0;
 		if (conversation.messages.length === 0) {
 			messageListEl.createDiv({
 				cls: "nlm-chat-empty",
@@ -116,6 +138,11 @@ export class ChatView extends ItemView {
 				cls: `nlm-chat-message nlm-chat-${message.role}`,
 			});
 			if (message.role === "assistant") {
+				const queryMetadata = conversation.queryMetadata[assistantMessageIndex] ?? null;
+				const messageKey = `${conversation.id}:${assistantMessageIndex}:${message.at}`;
+				assistantMessageIndex += 1;
+				this.renderAssistantSources(messageEl, queryMetadata, messageKey);
+
 				const bodyEl = messageEl.createDiv({
 					cls: "nlm-chat-message-body nlm-chat-message-markdown",
 				});
@@ -137,8 +164,15 @@ export class ChatView extends ItemView {
 			return;
 		}
 
-		if (this.busy) {
+		if (this.queryProgress) {
+			this.renderProgressPanel(messageListEl, this.queryProgress);
+		} else if (this.busy) {
 			messageListEl.createDiv({ cls: "nlm-chat-pending", text: "NotebookLM is working..." });
+		}
+
+		if (preserveScrollPosition) {
+			messageListEl.scrollTop = previousScrollTop;
+			return;
 		}
 
 		messageListEl.scrollTop = messageListEl.scrollHeight;
@@ -176,6 +210,7 @@ export class ChatView extends ItemView {
 		}
 
 		await this.plugin.startNewConversation();
+		this.sourceListExpandedByMessageKey.clear();
 		this.renderMessages();
 		this.inputEl?.focus();
 	}
@@ -191,6 +226,7 @@ export class ChatView extends ItemView {
 				this.setBusy(true);
 				try {
 					await this.plugin.loadConversation(conversationId);
+					this.sourceListExpandedByMessageKey.clear();
 					this.renderMessages();
 				} finally {
 					this.setBusy(false);
@@ -208,5 +244,134 @@ export class ChatView extends ItemView {
 		this.sendButton?.setDisabled(isBusy);
 		this.newButton?.setDisabled(isBusy);
 		this.historyButton?.setDisabled(isBusy);
+	}
+
+	private renderAssistantSources(
+		messageEl: HTMLDivElement,
+		queryMetadata: ConversationQueryMetadata | null,
+		messageKey: string,
+	): void {
+		if (!queryMetadata || queryMetadata.selectedSourceIds.length === 0) {
+			return;
+		}
+
+		const sourceItems = this.plugin.getSourceItemsForIds(queryMetadata.selectedSourceIds);
+		if (sourceItems.length === 0) {
+			return;
+		}
+
+		const expanded = this.sourceListExpandedByMessageKey.get(messageKey) ?? false;
+		const sourceAreaEl = messageEl.createDiv({ cls: "nlm-chat-sources" });
+		if (queryMetadata.sourceSummary) {
+			sourceAreaEl.createDiv({
+				cls: "nlm-chat-sources-summary",
+				text: `Step 1: ${queryMetadata.sourceSummary.newlyPreparedCount} newly prepared source${queryMetadata.sourceSummary.newlyPreparedCount === 1 ? "" : "s"} for this question.`,
+			});
+			sourceAreaEl.createDiv({
+				cls: "nlm-chat-sources-summary",
+				text: `Step 2: ${queryMetadata.sourceSummary.totalQuerySourceCount} total source${queryMetadata.sourceSummary.totalQuerySourceCount === 1 ? "" : "s"} used for answer generation.`,
+			});
+		}
+		const toggleButtonEl = sourceAreaEl.createEl("button", {
+			cls: "nlm-chat-sources-toggle",
+			text: expanded
+				? `Hide sources (${sourceItems.length})`
+				: `Show sources (${sourceItems.length})`,
+		});
+		toggleButtonEl.type = "button";
+		toggleButtonEl.addEventListener("click", () => {
+			this.sourceListExpandedByMessageKey.set(messageKey, !expanded);
+			this.renderMessages(true);
+		});
+
+		if (!expanded) {
+			return;
+		}
+
+		const listEl = sourceAreaEl.createDiv({ cls: "nlm-chat-sources-list" });
+		for (const sourceItem of sourceItems) {
+			this.renderSourceItem(listEl, sourceItem);
+		}
+	}
+
+	private renderSourceItem(listEl: HTMLDivElement, sourceItem: QuerySourceItem): void {
+		const sourceButtonEl = listEl.createEl("button", {
+			cls: "nlm-chat-source-item",
+			text: sourceItem.title,
+		});
+		sourceButtonEl.type = "button";
+		sourceButtonEl.addEventListener("click", () => {
+			void this.plugin.openSourceInNewTab(sourceItem.path);
+		});
+	}
+
+	private renderProgressPanel(containerEl: HTMLDivElement, progress: QueryProgressState): void {
+		const panelEl = containerEl.createDiv({ cls: "nlm-chat-progress" });
+		panelEl.createDiv({ cls: "nlm-chat-progress-title", text: "NotebookLM process" });
+
+		this.renderProgressStep(panelEl, "1", "Search and select documents", progress.steps.search, progress.searchDetail);
+		const uploadStepEl = this.renderProgressStep(
+			panelEl,
+			"2",
+			"Upload selected documents",
+			progress.steps.upload,
+			progress.uploadDetail,
+		);
+		uploadStepEl.createDiv({
+			cls: "nlm-chat-progress-meta",
+			text: `Uploaded ${progress.upload.uploadedCount}, reused ${progress.upload.reusedCount}, total ${progress.upload.total}`,
+		});
+		if (progress.steps.upload === "active" && progress.upload.currentPath) {
+			uploadStepEl.createDiv({
+				cls: "nlm-chat-progress-current",
+				text: `Current file: ${progress.upload.currentPath}`,
+			});
+		}
+
+		this.renderProgressStep(
+			panelEl,
+			"3",
+			"Wait for NotebookLM response",
+			progress.steps.response,
+			progress.responseDetail,
+		);
+	}
+
+	private renderProgressStep(
+		panelEl: HTMLDivElement,
+		stepNumber: string,
+		label: string,
+		state: QueryProgressStepState,
+		detail: string,
+	): HTMLDivElement {
+		const stepEl = panelEl.createDiv({
+			cls: `nlm-chat-progress-step nlm-chat-progress-step-${state}`,
+		});
+		stepEl.createDiv({
+			cls: "nlm-chat-progress-step-title",
+			text: `${stepNumber}. ${label}`,
+		});
+		stepEl.createDiv({
+			cls: `nlm-chat-progress-state nlm-chat-progress-state-${state}`,
+			text: this.getProgressStateLabel(state),
+		});
+		stepEl.createDiv({
+			cls: "nlm-chat-progress-detail",
+			text: detail,
+		});
+		return stepEl;
+	}
+
+	private getProgressStateLabel(state: QueryProgressStepState): string {
+		if (state === "done") {
+			return "Done";
+		}
+		if (state === "active") {
+			return "In progress";
+		}
+		if (state === "failed") {
+			return "Failed";
+		}
+		return "Pending";
 	}
 }

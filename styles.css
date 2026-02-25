@@ -46,6 +46,74 @@
 	border-radius: 8px;
 }
 
+.nlm-chat-progress {
+	padding: 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	background: var(--background-secondary);
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.nlm-chat-progress-title {
+	font-weight: 600;
+}
+
+.nlm-chat-progress-step {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 4px 10px;
+	padding: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+}
+
+.nlm-chat-progress-step-title {
+	font-weight: 500;
+}
+
+.nlm-chat-progress-state {
+	font-size: 0.75em;
+	padding: 2px 6px;
+	border-radius: 999px;
+	border: 1px solid transparent;
+	align-self: start;
+}
+
+.nlm-chat-progress-state-pending {
+	color: var(--text-muted);
+	border-color: var(--background-modifier-border);
+}
+
+.nlm-chat-progress-state-active {
+	color: var(--text-accent);
+	border-color: var(--text-accent);
+}
+
+.nlm-chat-progress-state-done {
+	color: var(--text-success);
+	border-color: var(--text-success);
+}
+
+.nlm-chat-progress-state-failed {
+	color: var(--text-error);
+	border-color: var(--text-error);
+}
+
+.nlm-chat-progress-detail,
+.nlm-chat-progress-meta,
+.nlm-chat-progress-current {
+	grid-column: 1 / -1;
+	font-size: 0.85em;
+	opacity: 0.9;
+}
+
+.nlm-chat-progress-current {
+	font-family: var(--font-monospace);
+}
+
 .nlm-chat-message {
 	max-width: 92%;
 	display: flex;
@@ -77,6 +145,54 @@
 	background: transparent;
 	border: 0;
 	color: var(--text-normal);
+}
+
+.nlm-chat-sources {
+	margin-bottom: 6px;
+}
+
+.nlm-chat-sources-summary {
+	font-size: 0.82em;
+	opacity: 0.9;
+	margin-bottom: 4px;
+}
+
+.nlm-chat-sources-toggle {
+	padding: 4px 8px;
+	font-size: 0.8em;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 999px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.nlm-chat-sources-toggle:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.nlm-chat-sources-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.nlm-chat-source-item {
+	padding: 4px 8px;
+	font-size: 0.78em;
+	font-family: var(--font-monospace);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	cursor: pointer;
+}
+
+.nlm-chat-source-item:hover {
+	background: var(--background-modifier-hover);
+	border-color: var(--text-accent);
 }
 
 .nlm-chat-message-markdown > :first-child {
