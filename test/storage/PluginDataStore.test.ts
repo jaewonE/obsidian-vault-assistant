@@ -266,6 +266,22 @@ test("normalizes out-of-range settings values from persisted data", async () => 
 	assert.equal(settings.bm25k1, 0);
 	assert.equal(settings.bm25b, 0);
 	assert.equal(settings.queryTimeoutSeconds, 5);
+	assert.equal(settings.searchWithExplicitSelections, true);
+});
+
+test("persists explicit-selection BM25 toggle setting", async () => {
+	const persistence = new InMemoryPersistence();
+	const store = new PluginDataStore(persistence);
+	await store.load();
+
+	assert.equal(store.getSettings().searchWithExplicitSelections, true);
+
+	store.updateSettings({ searchWithExplicitSelections: false });
+	await store.save();
+
+	const reloaded = new PluginDataStore(persistence);
+	await reloaded.load();
+	assert.equal(reloaded.getSettings().searchWithExplicitSelections, false);
 });
 
 test("prunes unreachable aliases while preserving resolvable aliases", async () => {
@@ -338,4 +354,70 @@ test("compacts oversized conversation history on save/load", async () => {
 		assert.ok(conversation.messages.length <= 400);
 		assert.ok(conversation.queryMetadata.length <= 200);
 	}
+});
+
+test("normalizes explicit selection metadata in query records", async () => {
+	const persistence = new InMemoryPersistence();
+	const at = new Date().toISOString();
+	persistence.data = {
+		settings: {},
+		sourceRegistry: {},
+		bm25Index: null,
+		conversationHistory: [
+			{
+				id: "conv-explicit",
+				createdAt: at,
+				updatedAt: at,
+				notebookId: null,
+				messages: [],
+				queryMetadata: [
+					{
+						at,
+						bm25Selection: {
+							query: "q",
+							topN: 15,
+							cutoffRatio: 0.4,
+							minK: 3,
+							top15: [],
+							selected: [],
+						},
+						explicitSelections: [
+							{
+								kind: "path",
+								mode: "markdown",
+								path: "docs/topic",
+								subfileCount: 2,
+								resolvedPaths: ["docs/topic/a.md", "docs/topic/b.md"],
+							},
+							{
+								kind: "invalid",
+								mode: "markdown",
+								path: "ignored",
+								subfileCount: 1,
+								resolvedPaths: ["ignored.md"],
+							},
+						],
+						selectedSourceIds: [],
+						evictions: [],
+						sourceSummary: {
+							bm25SelectedCount: 0,
+							explicitSelectedCount: 2,
+							newlyPreparedCount: 0,
+							reusedFromSelectionCount: 0,
+							carriedFromHistoryCount: 0,
+							totalQuerySourceCount: 0,
+						},
+					},
+				],
+			},
+		],
+	};
+
+	const store = new PluginDataStore(persistence);
+	await store.load();
+	const conversation = store.getConversationById("conv-explicit");
+	assert.ok(conversation);
+	assert.equal(conversation?.queryMetadata[0]?.explicitSelections?.length, 1);
+	assert.equal(conversation?.queryMetadata[0]?.explicitSelections?.[0]?.path, "docs/topic");
+	assert.equal(conversation?.queryMetadata[0]?.sourceSummary?.explicitSelectedCount, 2);
 });

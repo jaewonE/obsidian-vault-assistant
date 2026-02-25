@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.3.2`
+Version: `0.4.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -9,24 +9,50 @@ Obsidian Desktop community plugin that integrates with Google NotebookLM through
 
 The plugin provides a right-sidebar chat workflow:
 
-1. BM25 search over vault markdown notes
-2. Top N and dynamic threshold source selection
-3. Upload selected notes as NotebookLM text sources (if missing)
-4. Query NotebookLM with restricted `source_ids`
-5. Persist conversation history and query metadata
+1. Optional BM25 search over vault notes
+2. Optional explicit source selection via `@` / `@@`
+3. Source preparation and upload/reuse in NotebookLM
+4. NotebookLM query with bounded source scope
+5. Persisted conversation/source metadata for follow-up reuse
 
 ## Features
 
 - Right sidebar chat view (single-tab operation)
-- User questions in speech bubbles with NotebookLM answers rendered as markdown text
-- Live 3-step progress UI (BM25 selection -> source upload -> NotebookLM response wait)
-- In-tab source context reuse across follow-up questions (previous source IDs are passed with new queries)
-- Per-answer source list toggle with clickable source items that open files in new Obsidian tabs
-- `New` action for a fresh conversation context
+- User questions in bubbles, NotebookLM answers rendered as markdown
+- Live 3-step progress UI (search -> upload -> response)
+- Explicit source selection in composer:
+  - type `@` for markdown-only file/path search
+  - type `@@` for all-file file/path search
+  - live search updates while typing
+  - keyboard and mouse selection support (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`)
+  - supports search terms with spaces and underscore-to-space matching
+- Result list UX:
+  - left-aligned icon, filename, path
+  - extension-based icons for folder/markdown/pdf/image/video/code/common file types
+- Selected source chips above composer:
+  - file/path chips are clickable
+  - path chips include descendant file count (for example `docs/topic (4)`)
+  - each chip removable via `x`
+  - path chip click opens folder note only when `path/name/name.md|canvas|base` exists
+- Path guardrails:
+  - warning when path expansion exceeds 15 files
+  - reject when path expansion exceeds 200 files
+- Always-visible `Search vault` toggle in composer:
+  - default: enabled
+  - persisted in `data.json`
+  - when enabled: BM25 + explicit selections
+  - when disabled: explicit selections and conversation-carried sources only
+- Source reuse across follow-up questions in the same tab/session
+- `New` action for fresh conversation context
 - `History` modal to reload prior conversations
-- Source registry with capacity control and eviction
-- Settings for debug mode, auth refresh, and BM25 parameters
-- Resilient MCP client integration (stdio subprocess + reconnect)
+
+## Timeout behavior
+
+- `Query timeout (seconds)` default is `300`.
+- This setting is used for:
+  - `notebook_query` tool argument timeout
+  - MCP request timeout for NotebookLM calls (with a small buffer)
+- Timeout handling is applied to query, source upload/replacement flow, and startup notebook readiness calls.
 
 ## Requirements
 
@@ -71,14 +97,22 @@ Production build:
 npm run build
 ```
 
+Tests:
+
+```bash
+npm test
+```
+
 ## Usage
 
 1. Build the plugin.
 2. Copy `main.js`, `manifest.json`, and `styles.css` to:
    - `<Vault>/.obsidian/plugins/obsidian-vault-assistant/`
-3. Enable the plugin at **Settings → Community plugins**.
+3. Enable the plugin at **Settings -> Community plugins**.
 4. Run command: `Open NotebookLM chat`.
 5. Ask questions in the right sidebar chat view.
+6. Optionally add explicit sources via `@` / `@@` before sending.
+7. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
 ## Settings
 
@@ -90,37 +124,25 @@ npm run build
   - `min K`
   - `k1`
   - `b`
-- Query timeout seconds
+- `Query timeout (seconds)` (default `300`)
 
 ## Repository structure
 
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/main.ts`: minimal entrypoint
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/NotebookLMPlugin.ts`: plugin lifecycle + orchestration
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` search and path expansion logic
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/SourcePreparationService.ts`: source upload/reuse/replace/eviction algorithm service
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/historySourceIds.ts`: bounded history source carry-over selection logic
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/historySourceIds.ts`: bounded history source carry-over logic
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/search/BM25.ts`: BM25 indexing/search logic
 - `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/storage/PluginDataStore.ts`: persisted settings/history/source registry
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/ui/`: chat view, history modal, settings tab
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/logging/logger.ts`: debug-aware logging
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/ui/`: chat view, mention parser, history modal, settings tab
 
 ## Algorithm documentation
 
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_ALGORITHMS_0.3.2.md`: canonical algorithm and implementation documentation for BM25 retrieval, incremental index updates, NotebookLM source sync, alias handling, capacity/eviction, retry policy, and persistence compaction.
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_PIPELINE_0.3.2.md`: end-to-end requirement and behavior traceability baseline for the v0.3.2 pipeline.
-
-## Implementation considerations (from AGENTS.md)
-
-- Keep `main.ts` minimal and move feature logic into dedicated modules.
-- Use npm and esbuild for install/build (`npm install`, `npm run dev`, `npm run build`).
-- Keep stable command IDs; avoid renaming public command IDs after release.
-- Persist settings/data via `loadData()` and `saveData()`.
-- Register listeners with Obsidian `register*` helpers for safe unload behavior.
-- Do not commit build artifacts (`main.js`) or `node_modules/`.
-- Maintain accurate `manifest.json` and `versions.json` version compatibility.
-- Treat plugin `id` as stable once publicly released.
-- Keep desktop/mobile constraints explicit via `isDesktopOnly`.
-- Follow Obsidian privacy/security guidance (no hidden telemetry, explicit disclosures).
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_ALGORITHMS_0.4.0.md`
+- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_PIPELINE_0.4.0.md`
 
 ## Troubleshooting
 
@@ -131,16 +153,12 @@ which notebooklm-mcp
 which nlm
 ```
 
-If missing, reinstall globally.
-
 Authentication issues:
 
 ```bash
 nlm login
 nlm login --check
 ```
-
-Then use `Refresh Auth` in plugin settings.
 
 General diagnostics:
 

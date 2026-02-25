@@ -94,7 +94,7 @@ export class NotebookLMSettingTab extends PluginSettingTab {
 		this.addNumberSetting({
 			containerEl,
 			name: "Query timeout (seconds)",
-			desc: "Timeout passed to notebook_query.",
+			desc: "Passed to notebook_query and used for MCP request timeouts (with a small buffer).",
 			value: this.plugin.settings.queryTimeoutSeconds,
 			min: 5,
 			step: 1,

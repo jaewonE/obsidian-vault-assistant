@@ -98,7 +98,7 @@ test("pipeline smoke: bm25 selection -> source preparation -> persisted metadata
 			markSourceUsed: (path, protectedCap) => store.markSourceUsed(path, protectedCap),
 			getEvictionCandidatePath: () => store.getEvictionCandidatePath(),
 			removeSourceByPath: (path) => store.removeSourceByPath(path),
-			readMarkdown: async (path) => docs[path as keyof typeof docs] ?? null,
+			readSourceContent: async (path) => docs[path as keyof typeof docs] ?? null,
 			pathExists: (path) => path in docs,
 			hashText,
 			logDebug: () => {},

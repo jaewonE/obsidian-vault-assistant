@@ -35,7 +35,7 @@ export interface SourcePreparationDependencies {
 	markSourceUsed(path: string, protectedCap: number): void;
 	getEvictionCandidatePath(): string | null;
 	removeSourceByPath(path: string): SourceRegistryEntry | null;
-	readMarkdown(path: string): Promise<string | null>;
+	readSourceContent(path: string): Promise<string | null>;
 	pathExists(path: string): boolean;
 	hashText(content: string): string;
 	logDebug(message: string, payload?: unknown): void;
@@ -72,7 +72,7 @@ export async function ensureSourcesForPaths(
 			uploaded: false,
 		});
 
-		const content = await deps.readMarkdown(path);
+		const content = await deps.readSourceContent(path);
 		if (content === null) {
 			continue;
 		}

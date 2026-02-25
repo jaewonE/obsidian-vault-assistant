@@ -2,6 +2,57 @@
 
 All notable repository changes are documented here.
 
+## [0.4.0] - 2026-02-25
+
+### Added
+
+- Added Add File/Path composer workflow with `@` and `@@`:
+  - `@`: markdown-only search scope
+  - `@@`: all-file search scope
+  - live candidate updates while typing
+  - empty-state message when no candidate is found
+- Added explicit source chips above composer:
+  - clickable file/path chips
+  - path descendant count in chip label (`path (N)`)
+  - chip removal via `x`
+- Added folder-note resolution for selected paths:
+  - opens only `path/name/name.md`, `path/name/name.canvas`, or `path/name/name.base` if present
+- Added path expansion safeguards:
+  - warning when selected path expands to more than 15 files
+  - reject when selected path expands to more than 200 files
+- Added extension-based icons in mention list for folder/markdown/pdf/image/video/code/common files
+- Added persistent composer `Search vault` toggle:
+  - always visible
+  - persisted in plugin data (`data.json`)
+  - default enabled
+
+### Changed
+
+- Query planning now supports two modes:
+  - `Search vault = on`: BM25 + explicit selections
+  - `Search vault = off`: explicit selections + conversation-carried source IDs
+- Explicit selection metadata is persisted in query records (`kind`, `mode`, `path`, `resolvedPaths`, `subfileCount`).
+- Mention list UX was refined:
+  - left-aligned icon -> filename -> path
+  - improved keyboard navigation behavior
+  - improved active/hover highlight behavior during keyboard navigation
+- Mention parsing/search behavior was refined:
+  - search terms support spaces
+  - underscore-to-space normalization for matching
+- Source read abstraction moved from markdown-only to generic file content read path for `@@` support.
+- Timeout handling was corrected and extended:
+  - plugin setting timeout is passed to `notebook_query`
+  - MCP request timeout now explicitly follows setting-derived values (with small buffer)
+  - timeout handling now also applies to source upload/replacement flow and notebook readiness calls
+- Query timeout default changed to `300` seconds.
+
+### Fixed
+
+- Fixed chat input focus regressions triggered by mention-list keyboard handling patterns.
+- Fixed mention-list arrow navigation state conflicts between hover and keyboard selection.
+- Fixed mention-list icon vertical alignment.
+- Fixed cases where long operations could fail with MCP request timeout despite higher user timeout settings.
+
 ## [0.3.2] - 2026-02-25
 
 ### Changed

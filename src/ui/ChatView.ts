@@ -1,18 +1,132 @@
-import { ButtonComponent, ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
+import { ButtonComponent, ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, setIcon } from "obsidian";
 import type NotebookLMPlugin from "../main";
 import type {
+	AddFilePathSearchItem,
 	ConversationQueryMetadata,
+	ComposerSelectionItem,
 	QueryProgressState,
 	QueryProgressStepState,
 	QuerySourceItem,
 } from "../types";
 import { HistoryModal } from "./HistoryModal";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "./constants";
+import {
+	type AddFilePathMentionContext,
+	getActiveAddFilePathMention,
+	replaceMentionToken,
+} from "./pathMention";
+
+const FILE_EXTENSION_ICON_BY_NAME: Record<string, string> = {
+	md: "file-text",
+	canvas: "layout-dashboard",
+	base: "database",
+	pdf: "file-text",
+	csv: "table",
+	tsv: "table",
+	json: "braces",
+	yaml: "list-tree",
+	yml: "list-tree",
+	txt: "file",
+};
+
+const IMAGE_EXTENSIONS = new Set([
+	"png",
+	"jpg",
+	"jpeg",
+	"gif",
+	"webp",
+	"svg",
+	"bmp",
+	"tif",
+	"tiff",
+	"heic",
+	"ico",
+]);
+const VIDEO_EXTENSIONS = new Set([
+	"mp4",
+	"mov",
+	"mkv",
+	"avi",
+	"webm",
+	"m4v",
+	"wmv",
+	"flv",
+]);
+const CODE_EXTENSIONS = new Set([
+	"js",
+	"mjs",
+	"cjs",
+	"ts",
+	"jsx",
+	"tsx",
+	"py",
+	"c",
+	"cc",
+	"cpp",
+	"cxx",
+	"h",
+	"hh",
+	"hpp",
+	"hxx",
+	"java",
+	"r",
+	"sh",
+	"bash",
+	"zsh",
+	"fish",
+	"html",
+	"htm",
+	"css",
+	"scss",
+	"sass",
+	"sql",
+	"go",
+	"rs",
+	"php",
+	"rb",
+	"swift",
+	"kt",
+	"kts",
+	"lua",
+	"ps1",
+]);
+
+function getFileIconNameByExtension(extension?: string): string {
+	if (!extension) {
+		return "file";
+	}
+
+	const normalized = extension.toLocaleLowerCase();
+	if (IMAGE_EXTENSIONS.has(normalized)) {
+		return "image";
+	}
+	if (VIDEO_EXTENSIONS.has(normalized)) {
+		return "film";
+	}
+	if (CODE_EXTENSIONS.has(normalized)) {
+		return "file-code";
+	}
+
+	return FILE_EXTENSION_ICON_BY_NAME[normalized] ?? "file";
+}
+
+function getSearchItemIconName(item: AddFilePathSearchItem): string {
+	if (item.kind === "path") {
+		return "folder";
+	}
+	return getFileIconNameByExtension(item.extension);
+}
+
+function getDisplayParentPath(path: string): string {
+	return path.length > 0 ? path : "/";
+}
 
 export class ChatView extends ItemView {
 	private readonly plugin: NotebookLMPlugin;
 	private messageListEl: HTMLDivElement | null = null;
 	private inputEl: HTMLTextAreaElement | null = null;
+	private composerSelectionsEl: HTMLDivElement | null = null;
+	private mentionPanelEl: HTMLDivElement | null = null;
 	private sendButton: ButtonComponent | null = null;
 	private newButton: ButtonComponent | null = null;
 	private historyButton: ButtonComponent | null = null;
@@ -21,6 +135,14 @@ export class ChatView extends ItemView {
 	private queryProgress: QueryProgressState | null = null;
 	private unsubscribeProgress: (() => void) | null = null;
 	private sourceListExpandedByMessageKey = new Map<string, boolean>();
+	private composerSelections: ComposerSelectionItem[] = [];
+	private mentionCandidates: AddFilePathSearchItem[] = [];
+	private mentionItemElements: HTMLButtonElement[] = [];
+	private mentionSelectionIndex = 0;
+	private mentionHoveredIndex: number | null = null;
+	private mentionSearchVersion = 0;
+	private mentionSuppressedKey: string | null = null;
+	private mentionScopeRegistered = false;
 
 	constructor(leaf: WorkspaceLeaf, plugin: NotebookLMPlugin) {
 		super(leaf);
@@ -41,6 +163,7 @@ export class ChatView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		this.queryProgress = this.plugin.getQueryProgress();
+		this.registerMentionScope();
 		this.unsubscribeProgress?.();
 		this.unsubscribeProgress = this.plugin.onQueryProgressChange((progress) => {
 			this.queryProgress = progress;
@@ -53,6 +176,8 @@ export class ChatView extends ItemView {
 	async onClose(): Promise<void> {
 		this.unsubscribeProgress?.();
 		this.unsubscribeProgress = null;
+		this.mentionItemElements = [];
+		this.mentionHoveredIndex = null;
 		this.contentEl.empty();
 	}
 
@@ -80,6 +205,8 @@ export class ChatView extends ItemView {
 		this.messageListEl = rootEl.createDiv({ cls: "nlm-chat-messages" });
 
 		const composerEl = rootEl.createDiv({ cls: "nlm-chat-composer" });
+		this.composerSelectionsEl = composerEl.createDiv({ cls: "nlm-chat-composer-selections" });
+		this.composerSelectionsEl.style.display = "none";
 		this.inputEl = composerEl.createEl("textarea", {
 			cls: "nlm-chat-input",
 			attr: {
@@ -87,14 +214,22 @@ export class ChatView extends ItemView {
 				rows: "3",
 			},
 		});
-		this.inputEl.addEventListener("keydown", (event: KeyboardEvent) => {
-			if (event.key !== "Enter" || event.shiftKey) {
-				return;
-			}
-
-			event.preventDefault();
-			void this.sendMessage();
+		this.inputEl.addEventListener("input", () => {
+			void this.handleComposerInputChanged();
 		});
+		this.inputEl.addEventListener("click", () => {
+			void this.handleComposerInputChanged();
+		});
+		this.registerDomEvent(
+			this.inputEl,
+			"keydown",
+			(event: KeyboardEvent) => {
+				this.handleComposerKeydown(event);
+			},
+			{ capture: true },
+		);
+		this.mentionPanelEl = composerEl.createDiv({ cls: "nlm-chat-mention-panel" });
+		this.mentionPanelEl.style.display = "none";
 
 		this.sendButton = new ButtonComponent(composerEl)
 			.setButtonText("Send")
@@ -102,6 +237,437 @@ export class ChatView extends ItemView {
 			.onClick(() => {
 				void this.sendMessage();
 			});
+		this.renderComposerSelections();
+		this.renderMentionPanel();
+	}
+
+	private registerMentionScope(): void {
+		if (this.mentionScopeRegistered) {
+			return;
+		}
+
+		const scope = this.scope;
+		if (!scope) {
+			return;
+		}
+		this.mentionScopeRegistered = true;
+
+		scope.register([], "ArrowUp", () => this.handleMentionScopeKey("ArrowUp"));
+		scope.register([], "ArrowDown", () => this.handleMentionScopeKey("ArrowDown"));
+		scope.register([], "Enter", () => this.handleMentionScopeKey("Enter"));
+		scope.register([], "Escape", () => this.handleMentionScopeKey("Escape"));
+	}
+
+	private handleMentionScopeKey(key: "ArrowUp" | "ArrowDown" | "Enter" | "Escape"): boolean {
+		if (!this.isMentionPanelVisible()) {
+			return true;
+		}
+
+		if (key === "ArrowUp") {
+			this.navigateMentionItems(-1);
+			return false;
+		}
+		if (key === "ArrowDown") {
+			this.navigateMentionItems(1);
+			return false;
+		}
+		if (key === "Escape") {
+			this.dismissMentionPanel();
+			return false;
+		}
+		if (key === "Enter") {
+			if (this.mentionCandidates.length > 0) {
+				this.selectMentionCandidate(this.getEffectiveMentionIndex());
+			}
+			return false;
+		}
+
+		return true;
+	}
+
+	private handleComposerKeydown(event: KeyboardEvent): void {
+		if (!this.inputEl) {
+			return;
+		}
+
+		if (this.app.workspace.getActiveViewOfType(ChatView) !== this) {
+			return;
+		}
+
+		if (this.isMentionPanelVisible()) {
+			if (this.matchesArrowDown(event)) {
+				this.consumeKeyboardEvent(event);
+				this.navigateMentionItems(1);
+				return;
+			}
+			if (this.matchesArrowUp(event)) {
+				this.consumeKeyboardEvent(event);
+				this.navigateMentionItems(-1);
+				return;
+			}
+			if (this.matchesEscape(event)) {
+				this.consumeKeyboardEvent(event);
+				this.dismissMentionPanel();
+				return;
+			}
+			if (this.matchesEnter(event) && !event.shiftKey && !event.isComposing) {
+				this.consumeKeyboardEvent(event);
+				if (this.mentionCandidates.length > 0) {
+					this.selectMentionCandidate(this.getEffectiveMentionIndex());
+				}
+				return;
+			}
+		}
+
+		if (!this.matchesEnter(event) || event.shiftKey || event.isComposing) {
+			return;
+		}
+
+		this.consumeKeyboardEvent(event);
+		void this.sendMessage();
+	}
+
+	private consumeKeyboardEvent(event: KeyboardEvent): void {
+		event.preventDefault();
+		event.stopPropagation();
+		event.stopImmediatePropagation();
+	}
+
+	private matchesArrowDown(event: KeyboardEvent): boolean {
+		return event.key === "ArrowDown" || event.key === "Down" || event.code === "ArrowDown" || event.keyCode === 40;
+	}
+
+	private matchesArrowUp(event: KeyboardEvent): boolean {
+		return event.key === "ArrowUp" || event.key === "Up" || event.code === "ArrowUp" || event.keyCode === 38;
+	}
+
+	private matchesEscape(event: KeyboardEvent): boolean {
+		return event.key === "Escape" || event.key === "Esc" || event.code === "Escape" || event.keyCode === 27;
+	}
+
+	private matchesEnter(event: KeyboardEvent): boolean {
+		return event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter" || event.keyCode === 13;
+	}
+
+	private handleComposerInputChanged(): void {
+		if (!this.inputEl || this.busy) {
+			this.clearMentionPanel();
+			return;
+		}
+
+		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
+		const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+		if (!mentionContext) {
+			this.mentionSuppressedKey = null;
+			this.clearMentionPanel();
+			return;
+		}
+		this.mentionPanelEl?.removeClass("nlm-chat-mention-panel-keyboard-nav");
+		const mentionKey = this.getMentionSuppressionKey(mentionContext, this.inputEl.value);
+		if (this.mentionSuppressedKey && this.mentionSuppressedKey === mentionKey) {
+			this.clearMentionPanel();
+			return;
+		}
+		this.mentionSuppressedKey = null;
+
+		const currentSearchVersion = ++this.mentionSearchVersion;
+		const candidates = this.plugin.searchAddFilePathCandidates(mentionContext.term, mentionContext.mode);
+		if (currentSearchVersion !== this.mentionSearchVersion) {
+			return;
+		}
+		this.mentionCandidates = candidates;
+		if (this.mentionHoveredIndex !== null && this.mentionHoveredIndex >= candidates.length) {
+			this.mentionHoveredIndex = null;
+		}
+		this.mentionSelectionIndex = Math.min(this.mentionSelectionIndex, Math.max(0, candidates.length - 1));
+		this.renderMentionPanel();
+	}
+
+	private navigateMentionItems(direction: number): void {
+		if (this.mentionCandidates.length === 0) {
+			return;
+		}
+		this.mentionPanelEl?.addClass("nlm-chat-mention-panel-keyboard-nav");
+
+		if (this.mentionHoveredIndex !== null) {
+			this.mentionSelectionIndex = this.mentionHoveredIndex;
+			this.mentionHoveredIndex = null;
+		}
+
+		if (this.mentionSelectionIndex < 0 || this.mentionSelectionIndex >= this.mentionCandidates.length) {
+			this.mentionSelectionIndex = 0;
+		}
+
+		const nextIndex = this.mentionSelectionIndex + direction;
+		if (nextIndex < 0) {
+			this.mentionSelectionIndex = this.mentionCandidates.length - 1;
+		} else if (nextIndex >= this.mentionCandidates.length) {
+			this.mentionSelectionIndex = 0;
+		} else {
+			this.mentionSelectionIndex = nextIndex;
+		}
+
+		this.focusMentionItem(this.mentionSelectionIndex);
+	}
+
+	private getEffectiveMentionIndex(): number {
+		if (this.mentionSelectionIndex < 0 || this.mentionSelectionIndex >= this.mentionCandidates.length) {
+			return 0;
+		}
+		return this.mentionSelectionIndex;
+	}
+
+	private focusMentionItem(index: number): void {
+		this.mentionSelectionIndex = index;
+		for (let itemIndex = 0; itemIndex < this.mentionItemElements.length; itemIndex += 1) {
+			const item = this.mentionItemElements[itemIndex];
+			if (!item) {
+				continue;
+			}
+			if (itemIndex === index) {
+				item.addClass("nlm-chat-mention-item-active");
+				item.scrollIntoView({ block: "nearest" });
+			} else {
+				item.removeClass("nlm-chat-mention-item-active");
+			}
+		}
+	}
+
+	private handleMentionItemMouseOver(index: number): void {
+		this.mentionPanelEl?.removeClass("nlm-chat-mention-panel-keyboard-nav");
+		this.mentionHoveredIndex = index;
+		this.focusMentionItem(index);
+	}
+
+	private handleMentionItemMouseLeave(): void {
+		this.mentionHoveredIndex = null;
+	}
+
+	private isMentionPanelVisible(): boolean {
+		return !!this.mentionPanelEl && this.mentionPanelEl.style.display !== "none";
+	}
+
+	private dismissMentionPanel(): void {
+		if (this.inputEl) {
+			const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
+			const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+			this.mentionSuppressedKey = mentionContext
+				? this.getMentionSuppressionKey(mentionContext, this.inputEl.value)
+				: null;
+		}
+		this.clearMentionPanel();
+	}
+
+	private getMentionSuppressionKey(
+		context: AddFilePathMentionContext,
+		text: string,
+	): string {
+		const tokenText = text.slice(context.tokenStart, context.tokenEnd);
+		return `${context.tokenStart}:${context.trigger}:${tokenText}`;
+	}
+
+	private selectMentionCandidate(index: number): void {
+		if (!this.inputEl) {
+			return;
+		}
+
+		const candidate = this.mentionCandidates[index];
+		if (!candidate) {
+			return;
+		}
+
+		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
+		const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+		if (!mentionContext) {
+			return;
+		}
+
+		const resolved = this.plugin.resolveComposerSelection({
+			kind: candidate.kind,
+			path: candidate.path,
+			mode: mentionContext.mode,
+		});
+		if (resolved.error) {
+			new Notice(resolved.error);
+			return;
+		}
+		const resolvedSelection = resolved.selection;
+		if (!resolvedSelection) {
+			return;
+		}
+
+		const alreadyAdded = this.composerSelections.some(
+			(selection) => selection.kind === resolvedSelection.kind && selection.path === resolvedSelection.path,
+		);
+		if (alreadyAdded) {
+			new Notice("This file/path is already selected.");
+			const replaced = replaceMentionToken(this.inputEl.value, mentionContext, "");
+			this.inputEl.value = replaced.value;
+			this.inputEl.setSelectionRange(replaced.cursorIndex, replaced.cursorIndex);
+			this.mentionSuppressedKey = null;
+			this.clearMentionPanel();
+			this.inputEl.focus();
+			return;
+		}
+
+		this.composerSelections.push(resolvedSelection);
+		if (resolved.warning) {
+			new Notice(resolved.warning, 7000);
+		}
+		const replaced = replaceMentionToken(this.inputEl.value, mentionContext, "");
+		this.inputEl.value = replaced.value;
+		this.inputEl.setSelectionRange(replaced.cursorIndex, replaced.cursorIndex);
+		this.mentionSuppressedKey = null;
+		this.clearMentionPanel();
+		this.renderComposerSelections();
+		this.inputEl.focus();
+	}
+
+	private clearMentionPanel(): void {
+		this.mentionCandidates = [];
+		this.mentionItemElements = [];
+		this.mentionSelectionIndex = 0;
+		this.mentionHoveredIndex = null;
+		this.mentionSearchVersion += 1;
+		if (this.mentionPanelEl) {
+			this.mentionPanelEl.removeClass("nlm-chat-mention-panel-keyboard-nav");
+			this.mentionPanelEl.empty();
+			this.mentionPanelEl.style.display = "none";
+		}
+	}
+
+	private renderMentionPanel(): void {
+		if (!this.mentionPanelEl || !this.inputEl || this.busy) {
+			return;
+		}
+
+		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
+		const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+		this.mentionPanelEl.empty();
+		if (!mentionContext) {
+			this.mentionPanelEl.style.display = "none";
+			return;
+		}
+
+		this.mentionPanelEl.style.display = "flex";
+		if (this.mentionCandidates.length === 0) {
+			this.mentionItemElements = [];
+			this.mentionHoveredIndex = null;
+			this.mentionPanelEl.createDiv({
+				cls: "nlm-chat-mention-empty",
+				text: "No more files found.",
+			});
+			return;
+		}
+
+		this.mentionItemElements = [];
+		const activeIndex = this.getEffectiveMentionIndex();
+		for (let index = 0; index < this.mentionCandidates.length; index += 1) {
+			const candidate = this.mentionCandidates[index];
+			if (!candidate) {
+				continue;
+			}
+			const itemButton = this.mentionPanelEl.createEl("button", { cls: "nlm-chat-mention-item" });
+			itemButton.type = "button";
+			itemButton.addEventListener("click", () => {
+				this.selectMentionCandidate(index);
+			});
+			itemButton.addEventListener("mouseover", () => {
+				this.handleMentionItemMouseOver(index);
+			});
+			itemButton.addEventListener("mouseleave", () => {
+				this.handleMentionItemMouseLeave();
+			});
+			this.mentionItemElements.push(itemButton);
+
+			const iconEl = itemButton.createSpan({ cls: "nlm-chat-mention-icon" });
+			setIcon(iconEl, getSearchItemIconName(candidate));
+
+			const bodyEl = itemButton.createDiv({ cls: "nlm-chat-mention-body" });
+			const lineEl = bodyEl.createDiv({ cls: "nlm-chat-mention-line" });
+			const pathText =
+				candidate.kind === "file" ? getDisplayParentPath(candidate.parentPath) : candidate.path;
+			lineEl.createDiv({
+				cls: "nlm-chat-mention-title",
+				text: candidate.name,
+			});
+			lineEl.createDiv({
+				cls: "nlm-chat-mention-path",
+				text: pathText,
+			});
+		}
+
+		if (this.mentionItemElements.length > 0) {
+			this.focusMentionItem(Math.min(activeIndex, this.mentionItemElements.length - 1));
+		}
+	}
+
+	private renderComposerSelections(): void {
+		if (!this.composerSelectionsEl) {
+			return;
+		}
+
+		this.composerSelectionsEl.empty();
+		this.composerSelectionsEl.style.display = "flex";
+
+		for (const selection of this.composerSelections) {
+			const chipEl = this.composerSelectionsEl.createDiv({ cls: "nlm-chat-composer-selection" });
+			const openButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-open" });
+			openButtonEl.type = "button";
+			openButtonEl.addEventListener("click", () => {
+				void this.plugin.openComposerSelectionInNewTab(selection);
+			});
+
+			const iconEl = openButtonEl.createSpan({ cls: "nlm-chat-composer-selection-icon" });
+			const extension = selection.kind === "file" ? selection.path.split(".").pop() : undefined;
+			setIcon(
+				iconEl,
+				selection.kind === "path"
+					? "folder"
+					: getFileIconNameByExtension(extension),
+			);
+
+			openButtonEl.createSpan({
+				cls: "nlm-chat-composer-selection-label",
+				text:
+					selection.kind === "path"
+						? `${selection.path} (${selection.subfileCount})`
+						: selection.label,
+			});
+
+			const removeButtonEl = chipEl.createEl("button", {
+				cls: "nlm-chat-composer-selection-remove",
+				text: "x",
+			});
+			removeButtonEl.type = "button";
+			removeButtonEl.addEventListener("click", () => {
+				this.composerSelections = this.composerSelections.filter((item) => item.id !== selection.id);
+				this.renderComposerSelections();
+			});
+		}
+
+		const toggleEl = this.composerSelectionsEl.createDiv({ cls: "nlm-chat-composer-search-toggle" });
+		const toggleLabelEl = toggleEl.createEl("label", {
+			cls: "nlm-chat-composer-search-toggle-label",
+		});
+		const toggleInputEl = toggleLabelEl.createEl("input", {
+			cls: "nlm-chat-composer-search-toggle-input",
+			attr: { type: "checkbox" },
+		});
+		toggleInputEl.checked = this.plugin.getSearchVaultEnabled();
+		toggleInputEl.disabled = this.busy;
+		toggleInputEl.addEventListener("change", () => {
+			void this.plugin.setSearchVaultEnabled(toggleInputEl.checked).catch((error) => {
+				new Notice(
+					`Failed to update search toggle: ${error instanceof Error ? error.message : String(error)}`,
+				);
+				toggleInputEl.checked = this.plugin.getSearchVaultEnabled();
+			});
+		});
+		toggleLabelEl.createSpan({
+			cls: "nlm-chat-composer-search-toggle-text",
+			text: "Search vault",
+		});
 	}
 
 	private renderMessages(preserveScrollPosition = false): void {
@@ -187,12 +753,20 @@ export class ChatView extends ItemView {
 		if (!query) {
 			return;
 		}
+		const explicitSelections = [...this.composerSelections];
+		const includeBm25Search = this.plugin.getSearchVaultEnabled();
 
 		this.inputEl.value = "";
+		this.composerSelections = [];
+		this.renderComposerSelections();
+		this.clearMentionPanel();
 		this.setBusy(true);
 
 		try {
-			const runPromise = this.plugin.handleUserQuery(query);
+			const runPromise = this.plugin.handleUserQuery(query, {
+				explicitSelections,
+				includeBm25Search,
+			});
 			this.renderMessages();
 			await runPromise;
 		} catch (error) {
@@ -211,6 +785,9 @@ export class ChatView extends ItemView {
 
 		await this.plugin.startNewConversation();
 		this.sourceListExpandedByMessageKey.clear();
+		this.composerSelections = [];
+		this.renderComposerSelections();
+		this.clearMentionPanel();
 		this.renderMessages();
 		this.inputEl?.focus();
 	}
@@ -227,6 +804,9 @@ export class ChatView extends ItemView {
 				try {
 					await this.plugin.loadConversation(conversationId);
 					this.sourceListExpandedByMessageKey.clear();
+					this.composerSelections = [];
+					this.renderComposerSelections();
+					this.clearMentionPanel();
 					this.renderMessages();
 				} finally {
 					this.setBusy(false);
@@ -240,6 +820,10 @@ export class ChatView extends ItemView {
 		this.busy = isBusy;
 		if (this.inputEl) {
 			this.inputEl.disabled = isBusy;
+		}
+		this.renderComposerSelections();
+		if (isBusy) {
+			this.clearMentionPanel();
 		}
 		this.sendButton?.setDisabled(isBusy);
 		this.newButton?.setDisabled(isBusy);
@@ -267,6 +851,12 @@ export class ChatView extends ItemView {
 				cls: "nlm-chat-sources-summary",
 				text: `Step 1: ${queryMetadata.sourceSummary.newlyPreparedCount} newly prepared source${queryMetadata.sourceSummary.newlyPreparedCount === 1 ? "" : "s"} for this question.`,
 			});
+			if ((queryMetadata.sourceSummary.explicitSelectedCount ?? 0) > 0) {
+				sourceAreaEl.createDiv({
+					cls: "nlm-chat-sources-summary",
+					text: `Manual selection: ${queryMetadata.sourceSummary.explicitSelectedCount} source${queryMetadata.sourceSummary.explicitSelectedCount === 1 ? "" : "s"} added from selected files/paths.`,
+				});
+			}
 			sourceAreaEl.createDiv({
 				cls: "nlm-chat-sources-summary",
 				text: `Step 2: ${queryMetadata.sourceSummary.totalQuerySourceCount} total source${queryMetadata.sourceSummary.totalQuerySourceCount === 1 ? "" : "s"} used for answer generation.`,

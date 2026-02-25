@@ -185,7 +185,7 @@ function createHarness(options: {
 			bySourceId.delete(entry.sourceId);
 			return entry;
 		},
-		readMarkdown: async (path: string) => {
+		readSourceContent: async (path: string) => {
 			if (!existingPaths.has(path)) {
 				return null;
 			}

@@ -129,6 +129,8 @@ function normalizeSettings(rawSettings: unknown): NotebookLMPluginSettings {
 			SETTINGS_LIMITS.queryTimeoutSeconds.min,
 			SETTINGS_LIMITS.queryTimeoutSeconds.max,
 		),
+		searchWithExplicitSelections:
+			getBoolean(rawSettings.searchWithExplicitSelections) ?? DEFAULT_SETTINGS.searchWithExplicitSelections,
 	};
 }
 
@@ -267,10 +269,55 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 	const selected = normalizeScoredPathArray(bm25SelectionRaw.selected);
 	const selectedSourceIdsRaw = Array.isArray(value.selectedSourceIds) ? value.selectedSourceIds : [];
 	const evictionsRaw = Array.isArray(value.evictions) ? value.evictions : [];
+	const explicitSelectionsRaw = Array.isArray(value.explicitSelections) ? value.explicitSelections : [];
 	const sourceSummaryRaw = isRecord(value.sourceSummary) ? value.sourceSummary : null;
+	const explicitSelections = explicitSelectionsRaw
+		.map((item) => {
+			if (!isRecord(item)) {
+				return null;
+			}
+
+			const kindValue = getString(item.kind);
+			const modeValue = getString(item.mode);
+			const path = getString(item.path);
+			const subfileCount = getNumber(item.subfileCount);
+			const resolvedPathsRaw = Array.isArray(item.resolvedPaths) ? item.resolvedPaths : [];
+			if (
+				!kindValue ||
+				(kindValue !== "file" && kindValue !== "path") ||
+				!modeValue ||
+				(modeValue !== "markdown" && modeValue !== "all") ||
+				!path ||
+				subfileCount === undefined
+			) {
+				return null;
+			}
+
+			return {
+				kind: kindValue,
+				mode: modeValue,
+				path,
+				subfileCount,
+				resolvedPaths: resolvedPathsRaw.filter(
+					(resolvedPath): resolvedPath is string => typeof resolvedPath === "string",
+				),
+			};
+		})
+		.filter(
+			(
+				item,
+			): item is {
+				kind: "file" | "path";
+				mode: "markdown" | "all";
+				path: string;
+				subfileCount: number;
+				resolvedPaths: string[];
+			} => item !== null,
+		);
 	let sourceSummary: QuerySourceSummary | undefined;
 	if (sourceSummaryRaw) {
 		const bm25SelectedCount = getNumber(sourceSummaryRaw.bm25SelectedCount);
+		const explicitSelectedCount = getNumber(sourceSummaryRaw.explicitSelectedCount);
 		const newlyPreparedCount = getNumber(sourceSummaryRaw.newlyPreparedCount);
 		const reusedFromSelectionCount = getNumber(sourceSummaryRaw.reusedFromSelectionCount);
 		const carriedFromHistoryCount = getNumber(sourceSummaryRaw.carriedFromHistoryCount);
@@ -284,6 +331,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 		) {
 			sourceSummary = {
 				bm25SelectedCount,
+				explicitSelectedCount,
 				newlyPreparedCount,
 				reusedFromSelectionCount,
 				carriedFromHistoryCount,
@@ -302,6 +350,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 			top15,
 			selected,
 		},
+		explicitSelections: explicitSelections.length > 0 ? explicitSelections : undefined,
 		selectedSourceIds: selectedSourceIdsRaw.filter((item): item is string => typeof item === "string"),
 		evictions: evictionsRaw
 			.map((item) => {

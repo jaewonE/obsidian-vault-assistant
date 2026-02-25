@@ -19,6 +19,9 @@ interface JsonObject {
 interface ToolCallOptions {
 	idempotent?: boolean;
 	retryOnConnectionIssue?: boolean;
+	requestTimeoutMs?: number;
+	resetTimeoutOnProgress?: boolean;
+	maxTotalTimeoutMs?: number;
 }
 
 function isRecord(value: unknown): value is JsonObject {
@@ -95,7 +98,15 @@ export class NotebookLMMcpClient {
 			}
 
 			this.logger.debug(`MCP tool call: ${name}`, args);
-			const rawResult = await this.client.callTool({ name, arguments: args });
+			const rawResult = await this.client.callTool(
+				{ name, arguments: args },
+				undefined,
+				{
+					timeout: options.requestTimeoutMs,
+					resetTimeoutOnProgress: options.resetTimeoutOnProgress,
+					maxTotalTimeout: options.maxTotalTimeoutMs,
+				},
+			);
 			const parsed = this.parseToolResult(rawResult);
 			this.logger.debug(`MCP tool response: ${name}`, parsed);
 			return parsed as T;

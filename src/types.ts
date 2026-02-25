@@ -30,15 +30,54 @@ export interface SourceEvictionRecord {
 
 export interface QuerySourceSummary {
 	bm25SelectedCount: number;
+	explicitSelectedCount?: number;
 	newlyPreparedCount: number;
 	reusedFromSelectionCount: number;
 	carriedFromHistoryCount: number;
 	totalQuerySourceCount: number;
 }
 
+export type AddFilePathMode = "markdown" | "all";
+
+export type AddFilePathSelectionKind = "file" | "path";
+
+export interface AddFilePathSearchItem {
+	kind: AddFilePathSelectionKind;
+	path: string;
+	name: string;
+	parentPath: string;
+	extension?: string;
+	subfileCount: number;
+}
+
+export interface ComposerSelectionItem {
+	id: string;
+	kind: AddFilePathSelectionKind;
+	mode: AddFilePathMode;
+	path: string;
+	label: string;
+	filePaths: string[];
+	subfileCount: number;
+}
+
+export interface ResolveComposerSelectionResult {
+	selection: ComposerSelectionItem | null;
+	warning?: string;
+	error?: string;
+}
+
+export interface ExplicitSelectionMetadata {
+	kind: AddFilePathSelectionKind;
+	mode: AddFilePathMode;
+	path: string;
+	resolvedPaths: string[];
+	subfileCount: number;
+}
+
 export interface ConversationQueryMetadata {
 	at: string;
 	bm25Selection: BM25SelectionMetadata;
+	explicitSelections?: ExplicitSelectionMetadata[];
 	selectedSourceIds: string[];
 	evictions: SourceEvictionRecord[];
 	sourceSummary?: QuerySourceSummary;
@@ -102,6 +141,7 @@ export interface NotebookLMPluginSettings {
 	bm25k1: number;
 	bm25b: number;
 	queryTimeoutSeconds: number;
+	searchWithExplicitSelections: boolean;
 }
 
 export interface NotebookLMPluginData {
@@ -151,7 +191,8 @@ export const DEFAULT_SETTINGS: NotebookLMPluginSettings = {
 	bm25MinSourcesK: 3,
 	bm25k1: 1.2,
 	bm25b: 0.75,
-	queryTimeoutSeconds: 120,
+	queryTimeoutSeconds: 300,
+	searchWithExplicitSelections: true,
 };
 
 export const DEFAULT_SOURCE_REGISTRY: SourceRegistryState = {

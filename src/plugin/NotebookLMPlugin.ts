@@ -2,16 +2,24 @@ import { Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { Logger } from "../logging/logger";
 import { NotebookLMMcpBinaryMissingError, NotebookLMMcpClient } from "../mcp/NotebookLMMcpClient";
 import { buildReusableSourceIds } from "./historySourceIds";
+import { collectExplicitSelectionPaths, mergeSelectionPaths } from "./explicitSelectionMerge";
 import { ensureSourcesForPaths, JsonObject, SourcePreparationProgress } from "./SourcePreparationService";
-import { BM25 } from "../search/BM25";
+import { ExplicitSourceSelectionService } from "./ExplicitSourceSelectionService";
+import { BM25, type BM25SearchResult } from "../search/BM25";
 import { PluginDataStore } from "../storage/PluginDataStore";
 import {
+	AddFilePathMode,
+	AddFilePathSearchItem,
+	AddFilePathSelectionKind,
+	ComposerSelectionItem,
 	ConversationQueryMetadata,
 	ConversationRecord,
 	DEFAULT_SETTINGS,
+	ExplicitSelectionMetadata,
 	NotebookLMPluginSettings,
 	QueryProgressState,
 	QuerySourceItem,
+	ResolveComposerSelectionResult,
 	SOURCE_TARGET_CAPACITY,
 	SourceEvictionRecord,
 } from "../types";
@@ -67,6 +75,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private logger!: Logger;
 	private bm25!: BM25;
 	private mcpClient!: NotebookLMMcpClient;
+	private explicitSourceSelectionService!: ExplicitSourceSelectionService;
 	private activeConversationId: string | null = null;
 	private remoteSourceIds = new Set<string>();
 	private queryProgress: QueryProgressState | null = null;
@@ -78,6 +87,18 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 	getQueryProgress(): QueryProgressState | null {
 		return this.queryProgress;
+	}
+
+	getSearchVaultEnabled(): boolean {
+		return this.settings.searchWithExplicitSelections;
+	}
+
+	async setSearchVaultEnabled(enabled: boolean): Promise<void> {
+		if (this.settings.searchWithExplicitSelections === enabled) {
+			return;
+		}
+		this.store.updateSettings({ searchWithExplicitSelections: enabled });
+		await this.store.save();
 	}
 
 	onQueryProgressChange(listener: (progress: QueryProgressState | null) => void): () => void {
@@ -99,6 +120,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		this.logger = new Logger(() => this.settings.debugMode);
 		this.bm25 = new BM25(this.app, this.logger);
 		this.bm25.loadCachedIndex(this.store.getBM25Index());
+		this.explicitSourceSelectionService = new ExplicitSourceSelectionService(this.app);
 		this.mcpClient = new NotebookLMMcpClient(this.logger);
 
 		this.registerView(
@@ -166,6 +188,33 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		}
 
 		return items;
+	}
+
+	searchAddFilePathCandidates(term: string, mode: AddFilePathMode): AddFilePathSearchItem[] {
+		return this.explicitSourceSelectionService.search(term, mode);
+	}
+
+	resolveComposerSelection(params: {
+		kind: AddFilePathSelectionKind;
+		path: string;
+		mode: AddFilePathMode;
+	}): ResolveComposerSelectionResult {
+		return this.explicitSourceSelectionService.resolveSelection(params);
+	}
+
+	async openComposerSelectionInNewTab(selection: ComposerSelectionItem): Promise<void> {
+		if (selection.kind === "file") {
+			await this.openSourceInNewTab(selection.path);
+			return;
+		}
+
+		const folderNotePath = this.explicitSourceSelectionService.resolveFolderNotePath(selection.path);
+		if (!folderNotePath) {
+			new Notice(`Folder note not found for path: ${selection.path}`);
+			return;
+		}
+
+		await this.openSourceInNewTab(folderNotePath);
 	}
 
 	async openSourceInNewTab(path: string): Promise<void> {
@@ -244,11 +293,17 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return conversation;
 	}
 
-	async handleUserQuery(query: string): Promise<void> {
+	async handleUserQuery(
+		query: string,
+		options?: { explicitSelections?: ComposerSelectionItem[]; includeBm25Search?: boolean },
+	): Promise<void> {
 		const trimmedQuery = query.trim();
 		if (!trimmedQuery) {
 			return;
 		}
+		const explicitSelections = this.normalizeComposerSelections(options?.explicitSelections ?? []);
+		const explicitPaths = collectExplicitSelectionPaths(explicitSelections);
+		const includeBm25Search = this.shouldRunBm25ForQuery(options?.includeBm25Search);
 
 		const conversation = this.getActiveConversation();
 		const userMessageTime = new Date().toISOString();
@@ -262,6 +317,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		await this.store.save();
 
 		const safeSearchParams = this.getSafeBm25SearchParams();
+		const explicitSelectionMetadata = this.toExplicitSelectionMetadata(explicitSelections);
 		const queryMetadata: ConversationQueryMetadata = {
 			at: userMessageTime,
 			bm25Selection: {
@@ -272,6 +328,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				top15: [],
 				selected: [],
 			},
+			explicitSelections: explicitSelectionMetadata.length > 0 ? explicitSelectionMetadata : undefined,
 			selectedSourceIds: [],
 			evictions: [],
 		};
@@ -284,7 +341,9 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				upload: "pending",
 				response: "pending",
 			},
-			searchDetail: "Searching vault notes with BM25 and selecting documents...",
+			searchDetail: includeBm25Search
+				? "Searching vault notes with BM25 and selecting documents..."
+				: "BM25 search skipped. Using explicit and conversation sources only.",
 			uploadDetail: "Waiting for document selection...",
 			responseDetail: "Waiting for source preparation...",
 			upload: {
@@ -309,37 +368,57 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 		try {
 			const notebookId = await this.ensureNotebookReady();
-			const bm25Result = await this.bm25.search(trimmedQuery, safeSearchParams);
+			let bm25Result: BM25SearchResult | null = null;
+			if (includeBm25Search) {
+				bm25Result = await this.bm25.search(trimmedQuery, safeSearchParams);
+				queryMetadata.bm25Selection.top15 = bm25Result.topResults.map((item) => ({
+					path: item.path,
+					score: item.score,
+				}));
+				queryMetadata.bm25Selection.selected = bm25Result.selected.map((item) => ({
+					path: item.path,
+					score: item.score,
+				}));
+			}
 
-			queryMetadata.bm25Selection.top15 = bm25Result.topResults.map((item) => ({
-				path: item.path,
-				score: item.score,
-			}));
-			queryMetadata.bm25Selection.selected = bm25Result.selected.map((item) => ({
-				path: item.path,
-				score: item.score,
-			}));
-
-			if (bm25Result.selected.length === 0) {
-				if (bm25Result.queryTokens.length === 0) {
+			const bm25SelectedPaths = bm25Result ? bm25Result.selected.map((item) => item.path) : [];
+			const selectedPaths = mergeSelectionPaths(bm25SelectedPaths, explicitPaths);
+			const historicalSourceIds = this.getConversationReusableSourceIds(conversation);
+			if (selectedPaths.length === 0 && historicalSourceIds.length === 0) {
+				if (includeBm25Search && bm25Result) {
+					if (bm25Result.queryTokens.length === 0) {
+						throw new Error(
+							"No searchable tokens were found in your query after normalization. Try adding text keywords.",
+						);
+					}
+					if (bm25Result.matchedTokens.length === 0) {
+						throw new Error(
+							`No lexical match in vault notes for tokens: ${summarizeTokens(bm25Result.queryTokens)}.`,
+						);
+					}
 					throw new Error(
-						"No searchable tokens were found in your query after normalization. Try adding text keywords.",
-					);
-				}
-
-				if (bm25Result.matchedTokens.length === 0) {
-					throw new Error(
-						`No lexical match in vault notes for tokens: ${summarizeTokens(bm25Result.queryTokens)}.`,
+						`No BM25 candidates scored above zero. Matched tokens: ${summarizeTokens(bm25Result.matchedTokens)}.`,
 					);
 				}
 
 				throw new Error(
-					`No BM25 candidates scored above zero. Matched tokens: ${summarizeTokens(bm25Result.matchedTokens)}.`,
+					"No sources are available for this question. Enable Search vault or add files/paths with @.",
 				);
 			}
-
-			const selectedPaths = bm25Result.selected.map((item) => item.path);
 			const selectedCount = selectedPaths.length;
+			const searchDetailParts: string[] = [];
+			if (includeBm25Search) {
+				searchDetailParts.push(
+					`BM25 selected ${bm25SelectedPaths.length} source${bm25SelectedPaths.length === 1 ? "" : "s"} for this question`,
+				);
+			} else {
+				searchDetailParts.push("BM25 search skipped for this question");
+			}
+			if (explicitPaths.length > 0) {
+				searchDetailParts.push(
+					`manual selection added ${explicitPaths.length} file${explicitPaths.length === 1 ? "" : "s"}`,
+				);
+			}
 			currentStep = "upload";
 			updateProgress({
 				steps: {
@@ -347,7 +426,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					upload: "active",
 					response: "pending",
 				},
-				searchDetail: `BM25 selected ${selectedCount} source${selectedCount === 1 ? "" : "s"} for this question.`,
+				searchDetail: `${searchDetailParts.join("; ")}.`,
 				uploadDetail: `Preparing ${selectedCount} selected document${selectedCount === 1 ? "" : "s"}...`,
 				responseDetail: "Waiting for uploads to finish...",
 				upload: {
@@ -396,30 +475,37 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				},
 			);
 
-			queryMetadata.bm25Selection.selected = bm25Result.selected.map((item) => ({
-				path: item.path,
-				score: item.score,
-				sourceId: pathToSourceId[item.path],
-			}));
+			queryMetadata.bm25Selection.selected = bm25Result
+				? bm25Result.selected.map((item) => ({
+						path: item.path,
+						score: item.score,
+						sourceId: pathToSourceId[item.path],
+					}))
+				: [];
 
-			const sourceIds = bm25Result.selected
-				.map((item) => pathToSourceId[item.path])
+			const bm25SourceIds = bm25Result
+				? bm25Result.selected
+						.map((item) => pathToSourceId[item.path])
+						.filter((value): value is string => typeof value === "string" && value.length > 0)
+				: [];
+			const explicitSourceIds = explicitPaths
+				.map((path) => pathToSourceId[path])
 				.filter((value): value is string => typeof value === "string" && value.length > 0);
+			const currentSelectionSourceIds = [...new Set([...bm25SourceIds, ...explicitSourceIds])];
 
-			if (sourceIds.length === 0) {
+			const sourceIdsSet = new Set(currentSelectionSourceIds);
+			const carriedFromHistory = historicalSourceIds.filter((sourceId) => !sourceIdsSet.has(sourceId));
+			const mergedSourceIds = [...new Set([...historicalSourceIds, ...currentSelectionSourceIds])];
+			if (mergedSourceIds.length === 0) {
 				throw new Error("Failed to prepare NotebookLM sources for this query.");
 			}
-
-			const historicalSourceIds = this.getConversationReusableSourceIds(conversation);
-			const sourceIdsSet = new Set(sourceIds);
-			const carriedFromHistory = historicalSourceIds.filter((sourceId) => !sourceIdsSet.has(sourceId));
-			const mergedSourceIds = [...new Set([...historicalSourceIds, ...sourceIds])];
 			const newlyPreparedCount = uploadedPaths.size;
-			const reusedFromSelectionCount = sourceIds.length - newlyPreparedCount;
+			const reusedFromSelectionCount = Math.max(0, currentSelectionSourceIds.length - newlyPreparedCount);
 			const totalQuerySourceCount = mergedSourceIds.length;
 			queryMetadata.selectedSourceIds = mergedSourceIds;
 			queryMetadata.sourceSummary = {
-				bm25SelectedCount: sourceIds.length,
+				bm25SelectedCount: bm25SourceIds.length,
+				explicitSelectedCount: explicitSourceIds.length,
 				newlyPreparedCount,
 				reusedFromSelectionCount,
 				carriedFromHistoryCount: carriedFromHistory.length,
@@ -433,7 +519,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					response: "active",
 				},
 				uploadDetail: `Step 1 complete: prepared ${newlyPreparedCount} new source${newlyPreparedCount === 1 ? "" : "s"} (reused ${reusedFromSelectionCount} from current selection).`,
-				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${sourceIds.length}, session ${carriedFromHistory.length}).`,
+				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${currentSelectionSourceIds.length}, session ${carriedFromHistory.length}).`,
 			});
 
 				const queryArgs: Record<string, unknown> = {
@@ -446,7 +532,11 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				queryArgs.conversation_id = conversation.notebookConversationId;
 			}
 
-			let queryResult = await this.mcpClient.callTool<JsonObject>("notebook_query", queryArgs);
+			const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+			let queryResult = await this.mcpClient.callTool<JsonObject>("notebook_query", queryArgs, {
+				requestTimeoutMs: mcpRequestTimeoutMs,
+				resetTimeoutOnProgress: true,
+			});
 			try {
 				this.ensureToolSuccess("notebook_query", queryResult);
 			} catch (error) {
@@ -456,7 +546,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				) {
 					delete queryArgs.conversation_id;
 					conversation.notebookConversationId = undefined;
-					queryResult = await this.mcpClient.callTool<JsonObject>("notebook_query", queryArgs);
+					queryResult = await this.mcpClient.callTool<JsonObject>("notebook_query", queryArgs, {
+						requestTimeoutMs: mcpRequestTimeoutMs,
+						resetTimeoutOnProgress: true,
+					});
 					this.ensureToolSuccess("notebook_query", queryResult);
 				} else {
 					throw error;
@@ -537,9 +630,15 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	async refreshAuthFromSettings(): Promise<void> {
 		try {
 			await this.ensureMcpConnected();
-			const refreshResult = await this.mcpClient.callTool<JsonObject>("refresh_auth", {});
+			const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+			const refreshResult = await this.mcpClient.callTool<JsonObject>("refresh_auth", {}, {
+				requestTimeoutMs: mcpRequestTimeoutMs,
+			});
 			this.ensureToolSuccess("refresh_auth", refreshResult);
-			await this.mcpClient.callTool<JsonObject>("server_info", {}, { idempotent: true });
+			await this.mcpClient.callTool<JsonObject>("server_info", {}, {
+				idempotent: true,
+				requestTimeoutMs: mcpRequestTimeoutMs,
+			});
 			await this.ensureNotebookReady();
 		} catch (error) {
 			this.logger.error("Refresh auth failed", getErrorMessage(error));
@@ -567,7 +666,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private async startMcpServer(): Promise<void> {
 		try {
 			await this.ensureMcpConnected();
-			await this.mcpClient.callTool<JsonObject>("server_info", {}, { idempotent: true });
+			await this.mcpClient.callTool<JsonObject>("server_info", {}, {
+				idempotent: true,
+				requestTimeoutMs: this.getSafeMcpRequestTimeoutMs(),
+			});
 			await this.ensureNotebookReady();
 		} catch (error) {
 			if (error instanceof NotebookLMMcpBinaryMissingError) {
@@ -597,6 +699,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 	private async ensureNotebookReady(): Promise<string> {
 		await this.ensureMcpConnected();
+		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
 
 		let notebookId = this.settings.notebookId;
 		if (notebookId) {
@@ -606,7 +709,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					{
 						notebook_id: notebookId,
 					},
-					{ idempotent: true },
+					{ idempotent: true, requestTimeoutMs: mcpRequestTimeoutMs },
 				);
 				this.ensureToolSuccess("notebook_get", notebookResult);
 				this.updateRemoteSources(notebookResult);
@@ -621,9 +724,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			}
 		}
 
-		const createResult = await this.mcpClient.callTool<JsonObject>("notebook_create", {
-			title: NOTEBOOK_TITLE,
-		});
+		const createResult = await this.mcpClient.callTool<JsonObject>(
+			"notebook_create",
+			{
+				title: NOTEBOOK_TITLE,
+			},
+			{ requestTimeoutMs: mcpRequestTimeoutMs },
+		);
 		this.ensureToolSuccess("notebook_create", createResult);
 		notebookId = this.extractNotebookId(createResult);
 		if (!notebookId) {
@@ -633,7 +740,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		this.store.updateSettings({ notebookId });
 		const notebookResult = await this.mcpClient.callTool<JsonObject>("notebook_get", {
 			notebook_id: notebookId,
-		}, { idempotent: true });
+		}, { idempotent: true, requestTimeoutMs: mcpRequestTimeoutMs });
 		this.ensureToolSuccess("notebook_get", notebookResult);
 		this.updateRemoteSources(notebookResult);
 		this.store.reconcileSources(this.remoteSourceIds);
@@ -698,7 +805,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return {
 			remoteSourceIds: this.remoteSourceIds,
 			callTool: <T>(name: string, args: Record<string, unknown>) =>
-				this.mcpClient.callTool<T>(name, args),
+				this.mcpClient.callTool<T>(name, args, {
+					requestTimeoutMs: this.getSafeMcpRequestTimeoutMs(),
+					resetTimeoutOnProgress: true,
+				}),
 			ensureToolSuccess: (toolName: string, toolResult: unknown) => this.ensureToolSuccess(toolName, toolResult),
 			extractSourceId: (toolResult: unknown) => this.extractSourceId(toolResult),
 			getToolFailure: (toolResult: unknown) => this.getToolFailure(toolResult),
@@ -712,13 +822,20 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			markSourceUsed: (path: string, protectedCap: number) => this.store.markSourceUsed(path, protectedCap),
 			getEvictionCandidatePath: () => this.store.getEvictionCandidatePath(),
 			removeSourceByPath: (path: string) => this.store.removeSourceByPath(path),
-			readMarkdown: async (path: string) => {
+			readSourceContent: async (path: string) => {
 				const file = this.app.vault.getAbstractFileByPath(path);
 				if (!(file instanceof TFile)) {
 					return null;
 				}
-
-				return this.app.vault.cachedRead(file);
+				try {
+					return await this.app.vault.cachedRead(file);
+				} catch (error) {
+					this.logger.warn("Failed to read source content", {
+						path,
+						error: getErrorMessage(error),
+					});
+					return null;
+				}
 			},
 			pathExists: (path: string) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
 			hashText: (content: string) => this.hashText(content),
@@ -761,6 +878,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			SETTINGS_LIMITS.queryTimeoutSeconds.min,
 			SETTINGS_LIMITS.queryTimeoutSeconds.max,
 		);
+	}
+
+	private getSafeMcpRequestTimeoutMs(bufferMs = 30_000): number {
+		return this.getSafeQueryTimeoutSeconds() * 1000 + bufferMs;
 	}
 
 	private clampInteger(value: number, min: number, max: number): number {
@@ -953,10 +1074,57 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		});
 	}
 
+	private shouldRunBm25ForQuery(requestedValue?: boolean): boolean {
+		if (typeof requestedValue === "boolean") {
+			return requestedValue;
+		}
+		return this.settings.searchWithExplicitSelections;
+	}
+
 	private getFileTitleFromPath(path: string): string {
 		const parts = path.split("/");
 		const lastPart = parts[parts.length - 1];
 		return lastPart?.trim().length ? lastPart : path;
+	}
+
+	private normalizeComposerSelections(selections: ComposerSelectionItem[]): ComposerSelectionItem[] {
+		const normalized: ComposerSelectionItem[] = [];
+		const seenSelectionKeys = new Set<string>();
+		for (const selection of selections) {
+			if (!selection?.path || (selection.kind !== "file" && selection.kind !== "path")) {
+				continue;
+			}
+
+			const rawFilePaths = Array.isArray(selection.filePaths) ? selection.filePaths : [];
+			const filePaths = [...new Set(rawFilePaths.filter((path) => typeof path === "string" && !!path))];
+			if (filePaths.length === 0) {
+				continue;
+			}
+
+			const key = `${selection.kind}:${selection.path}`;
+			if (seenSelectionKeys.has(key)) {
+				continue;
+			}
+			seenSelectionKeys.add(key);
+
+			normalized.push({
+				...selection,
+				filePaths,
+				subfileCount: selection.kind === "path" ? Math.max(1, selection.subfileCount) : 1,
+			});
+		}
+
+		return normalized;
+	}
+
+	private toExplicitSelectionMetadata(selections: ComposerSelectionItem[]): ExplicitSelectionMetadata[] {
+		return selections.map((selection) => ({
+			kind: selection.kind,
+			mode: selection.mode,
+			path: selection.path,
+			resolvedPaths: [...selection.filePaths],
+			subfileCount: selection.subfileCount,
+		}));
 	}
 
 	private hashText(value: string): string {
