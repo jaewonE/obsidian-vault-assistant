@@ -2,6 +2,25 @@
 
 All notable repository changes are documented here.
 
+## [0.4.1] - 2026-03-01
+
+### Added
+
+- Added extension-aware source upload policy for `@` / `@@` selected files:
+  - allowed extensions are centrally validated before upload
+  - upload method is selected per extension (`text` vs `file`)
+- Added modular upload planning utility:
+  - centralized extension parsing, allowlist checks, and upload-plan creation
+  - single-part upload plans are used now, with plan structure prepared for future subdivision/splitting extensions
+
+### Changed
+
+- Refactored source preparation flow to remove hardcoded text upload and use upload plans.
+- Non-text allowed extensions now use MCP `source_add` with `source_type=file` and `file_path` instead of pasted text payloads.
+- Query execution now ignores disallowed `@` / `@@` file paths and shows a notice:
+  - `Ignored N files due to unallowed extensions ...`
+- Updated source preparation hashing to support binary content hashing for file uploads.
+
 ## [0.4.0] - 2026-02-25
 
 ### Added

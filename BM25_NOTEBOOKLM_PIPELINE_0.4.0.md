@@ -1,8 +1,8 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.0)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.1)
 
 ## 1. Scope
 
-This document defines the `v0.4.0` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
+This document defines the `v0.4.1` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
 
 ## 2. Pipeline stages
 
@@ -35,6 +35,9 @@ This document defines the `v0.4.0` end-to-end behavior with explicit file/path a
 | Clicking selected file opens note | `src/plugin/NotebookLMPlugin.ts` (`openComposerSelectionInNewTab`) |
 | Clicking selected path opens folder note only if exists (`.md`, `.canvas`, `.base`) | `ExplicitSourceSelectionService.resolveFolderNotePath` + `NotebookLMPlugin.openComposerSelectionInNewTab` |
 | Explicit selections are added in addition to BM25 selections | `src/plugin/explicitSelectionMerge.ts` + `NotebookLMPlugin.handleUserQuery` |
+| Explicitly selected paths are filtered by allowed upload extensions before source preparation | `src/plugin/sourceUploadPolicy.ts` + `NotebookLMPlugin.handleUserQuery` |
+| Disallowed selected file types are ignored with a notice showing ignored count and extensions | `NotebookLMPlugin.handleUserQuery` (`Notice: Ignored N files due to unallowed extensions ...`) |
+| Upload method is selected by extension (`source_type=text` vs `source_type=file`) | `src/plugin/sourceUploadPolicy.ts` + `src/plugin/SourcePreparationService.ts` |
 | Non-overlap BM25 15 + explicit 4 produces 19 prepared files | dedupe-union merge behavior in `mergeSelectionPaths` |
 
 ## 4. Persistence/metadata requirements
@@ -58,6 +61,7 @@ Normalization and backward compatibility:
 - No additional external network dependency for explicit search logic.
 - Existing source capacity/eviction policy is preserved.
 - Existing retry/idempotency policy is preserved.
+- File uploads resolve vault-relative paths to full local paths before MCP file upload.
 
 ## 6. Validation matrix
 
@@ -66,6 +70,7 @@ Automated:
 - `test/ui/pathMention.test.ts`
 - `test/plugin/ExplicitSourceSelectionService.test.ts`
 - `test/plugin/explicitSelectionMerge.test.ts`
+- `test/plugin/NotebookLMPlugin.sources.test.ts` (file upload args for non-text extensions)
 - `test/storage/PluginDataStore.test.ts` (explicit metadata normalization)
 - existing source-preparation and integration tests (`test/plugin/*`, `test/integration/PipelineSmoke.test.ts`)
 
@@ -73,7 +78,7 @@ Build/type checks:
 
 - `npm run build`
 
-## 7. Out of scope for v0.4.0
+## 7. Out of scope for v0.4.1
 
 - Slash command execution runtime (command action dispatch)
 - Multi-select from a single mention search session

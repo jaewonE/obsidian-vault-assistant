@@ -3,6 +3,7 @@ import {
 	SourceEvictionRecord,
 	SourceRegistryEntry,
 } from "../types";
+import { SourceUploadPart, SourceUploadPlan } from "./sourceUploadPolicy";
 
 export interface JsonObject {
 	[key: string]: unknown;
@@ -35,9 +36,8 @@ export interface SourcePreparationDependencies {
 	markSourceUsed(path: string, protectedCap: number): void;
 	getEvictionCandidatePath(): string | null;
 	removeSourceByPath(path: string): SourceRegistryEntry | null;
-	readSourceContent(path: string): Promise<string | null>;
+	prepareUploadPlan(path: string): Promise<SourceUploadPlan | null>;
 	pathExists(path: string): boolean;
-	hashText(content: string): string;
 	logDebug(message: string, payload?: unknown): void;
 	logWarn(message: string, payload?: unknown): void;
 }
@@ -72,12 +72,12 @@ export async function ensureSourcesForPaths(
 			uploaded: false,
 		});
 
-		const content = await deps.readSourceContent(path);
-		if (content === null) {
+		const uploadPlan = await deps.prepareUploadPlan(path);
+		if (!uploadPlan) {
 			continue;
 		}
 
-		const contentHash = deps.hashText(content);
+		const contentHash = uploadPlan.contentHash;
 		const existing = deps.getSourceEntryByPath(path);
 		const existingSourceId = existing ? deps.resolveSourceId(existing.sourceId) : "";
 		const canReuseExisting =
@@ -120,7 +120,7 @@ export async function ensureSourcesForPaths(
 				{
 					notebookId,
 					path,
-					content,
+					uploadPlan,
 					previousSourceId: existingSourceId,
 				},
 				deps,
@@ -181,19 +181,14 @@ export async function ensureSourcesForPaths(
 			action: "uploading",
 			uploaded: true,
 		});
-		const addResult = await deps.callTool<JsonObject>("source_add", {
-			notebook_id: notebookId,
-			source_type: "text",
-			text: content,
-			title: path,
-			wait: true,
-		});
-		deps.ensureToolSuccess("source_add", addResult);
-
-		const sourceId = deps.extractSourceId(addResult);
-		if (!sourceId) {
-			throw new Error(`source_add for ${path} did not return source_id`);
-		}
+		const sourceId = await uploadSourceFromPlan(
+			{
+				notebookId,
+				path,
+				uploadPlan,
+			},
+			deps,
+		);
 
 		deps.upsertSource({
 			path,
@@ -255,29 +250,92 @@ async function replaceSourceWithLatestContent(
 	params: {
 		notebookId: string;
 		path: string;
-		content: string;
+		uploadPlan: SourceUploadPlan;
 		previousSourceId: string;
 	},
 	deps: SourcePreparationDependencies,
 ): Promise<string> {
-	const { notebookId, path, content, previousSourceId } = params;
-	const addResult = await deps.callTool<JsonObject>("source_add", {
-		notebook_id: notebookId,
-		source_type: "text",
-		text: content,
-		title: path,
-		wait: true,
-	});
+	const { notebookId, path, uploadPlan, previousSourceId } = params;
+	const sourceId = await uploadSourceFromPlan(
+		{
+			notebookId,
+			path,
+			uploadPlan,
+		},
+		deps,
+	);
+	deps.remoteSourceIds.add(sourceId);
+
+	await deleteSourceIfExists(previousSourceId, deps, { bestEffort: true });
+	return sourceId;
+}
+
+async function uploadSourceFromPlan(
+	params: {
+		notebookId: string;
+		path: string;
+		uploadPlan: SourceUploadPlan;
+	},
+	deps: SourcePreparationDependencies,
+): Promise<string> {
+	const { notebookId, path, uploadPlan } = params;
+	const part = getSingleUploadPart(uploadPlan, path);
+	const addResult = await deps.callTool<JsonObject>(
+		"source_add",
+		buildSourceAddArgs(notebookId, part),
+	);
 	deps.ensureToolSuccess("source_add", addResult);
 
 	const sourceId = deps.extractSourceId(addResult);
 	if (!sourceId) {
 		throw new Error(`source_add for ${path} did not return source_id`);
 	}
-	deps.remoteSourceIds.add(sourceId);
 
-	await deleteSourceIfExists(previousSourceId, deps, { bestEffort: true });
 	return sourceId;
+}
+
+function getSingleUploadPart(uploadPlan: SourceUploadPlan, path: string): SourceUploadPart {
+	if (!Array.isArray(uploadPlan.parts) || uploadPlan.parts.length === 0) {
+		throw new Error(`Upload plan for ${path} has no parts.`);
+	}
+	if (uploadPlan.parts.length > 1) {
+		throw new Error(
+			`Upload plan for ${path} has ${uploadPlan.parts.length} parts. Multipart source registration is not yet supported.`,
+		);
+	}
+	return uploadPlan.parts[0] as SourceUploadPart;
+}
+
+function buildSourceAddArgs(
+	notebookId: string,
+	part: SourceUploadPart,
+): Record<string, unknown> {
+	if (part.sourceType === "text") {
+		if (typeof part.text !== "string") {
+			throw new Error("Text upload part is missing text content.");
+		}
+		return {
+			notebook_id: notebookId,
+			source_type: "text",
+			text: part.text,
+			title: part.title,
+			wait: true,
+		};
+	}
+
+	if (part.sourceType === "file") {
+		if (!part.filePath) {
+			throw new Error("File upload part is missing file_path.");
+		}
+		return {
+			notebook_id: notebookId,
+			source_type: "file",
+			file_path: part.filePath,
+			wait: true,
+		};
+	}
+
+	throw new Error(`Unsupported upload source type: ${String(part.sourceType)}`);
 }
 
 async function deleteSourceIfExists(

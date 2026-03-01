@@ -1,10 +1,17 @@
-import { Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
+import { FileSystemAdapter, Notice, Plugin, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { Logger } from "../logging/logger";
 import { NotebookLMMcpBinaryMissingError, NotebookLMMcpClient } from "../mcp/NotebookLMMcpClient";
 import { buildReusableSourceIds } from "./historySourceIds";
 import { collectExplicitSelectionPaths, mergeSelectionPaths } from "./explicitSelectionMerge";
 import { ensureSourcesForPaths, JsonObject, SourcePreparationProgress } from "./SourcePreparationService";
 import { ExplicitSourceSelectionService } from "./ExplicitSourceSelectionService";
+import {
+	buildFileUploadPlan,
+	buildTextUploadPlan,
+	filterAllowedUploadPaths,
+	getUploadMethodForPath,
+	SourceUploadPlan,
+} from "./sourceUploadPolicy";
 import { BM25, type BM25SearchResult } from "../search/BM25";
 import { PluginDataStore } from "../storage/PluginDataStore";
 import {
@@ -383,8 +390,19 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 			const bm25SelectedPaths = bm25Result ? bm25Result.selected.map((item) => item.path) : [];
 			const selectedPaths = mergeSelectionPaths(bm25SelectedPaths, explicitPaths);
+			const allowedUploadPathsResult = filterAllowedUploadPaths(selectedPaths);
+			const selectedUploadPaths = allowedUploadPathsResult.allowedPaths;
+			if (allowedUploadPathsResult.ignoredCount > 0) {
+				const extensionList = allowedUploadPathsResult.ignoredExtensions.join(", ");
+				new Notice(
+					`Ignored ${allowedUploadPathsResult.ignoredCount} file${allowedUploadPathsResult.ignoredCount === 1 ? "" : "s"} due to unallowed extensions ${extensionList}.`,
+					8000,
+				);
+			}
+			const selectedUploadPathSet = new Set(selectedUploadPaths);
+			const explicitUploadPaths = explicitPaths.filter((path) => selectedUploadPathSet.has(path));
 			const historicalSourceIds = this.getConversationReusableSourceIds(conversation);
-			if (selectedPaths.length === 0 && historicalSourceIds.length === 0) {
+			if (selectedUploadPaths.length === 0 && historicalSourceIds.length === 0) {
 				if (includeBm25Search && bm25Result) {
 					if (bm25Result.queryTokens.length === 0) {
 						throw new Error(
@@ -405,7 +423,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					"No sources are available for this question. Enable Search vault or add files/paths with @.",
 				);
 			}
-			const selectedCount = selectedPaths.length;
+			const selectedCount = selectedUploadPaths.length;
 			const searchDetailParts: string[] = [];
 			if (includeBm25Search) {
 				searchDetailParts.push(
@@ -414,9 +432,9 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			} else {
 				searchDetailParts.push("BM25 search skipped for this question");
 			}
-			if (explicitPaths.length > 0) {
+			if (explicitUploadPaths.length > 0) {
 				searchDetailParts.push(
-					`manual selection added ${explicitPaths.length} file${explicitPaths.length === 1 ? "" : "s"}`,
+					`manual selection added ${explicitUploadPaths.length} file${explicitUploadPaths.length === 1 ? "" : "s"}`,
 				);
 			}
 			currentStep = "upload";
@@ -438,13 +456,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				},
 			});
 
-				const uploadedPaths = new Set<string>();
-				const reusedPaths = new Set<string>();
-				const pathToSourceId = await this.ensureSourcesForPaths(
-					notebookId,
-					selectedPaths,
-					queryMetadata.evictions,
-					(sourceProgress) => {
+			const uploadedPaths = new Set<string>();
+			const reusedPaths = new Set<string>();
+			const pathToSourceId = await this.ensureSourcesForPaths(
+				notebookId,
+				selectedUploadPaths,
+				queryMetadata.evictions,
+				(sourceProgress) => {
 					if (sourceProgress.action === "ready") {
 						if (sourceProgress.uploaded) {
 							uploadedPaths.add(sourceProgress.path);
@@ -488,7 +506,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 						.map((item) => pathToSourceId[item.path])
 						.filter((value): value is string => typeof value === "string" && value.length > 0)
 				: [];
-			const explicitSourceIds = explicitPaths
+			const explicitSourceIds = explicitUploadPaths
 				.map((path) => pathToSourceId[path])
 				.filter((value): value is string => typeof value === "string" && value.length > 0);
 			const currentSelectionSourceIds = [...new Set([...bm25SourceIds, ...explicitSourceIds])];
@@ -522,12 +540,12 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				responseDetail: `Step 2 complete: querying with ${totalQuerySourceCount} total source${totalQuerySourceCount === 1 ? "" : "s"} (current ${currentSelectionSourceIds.length}, session ${carriedFromHistory.length}).`,
 			});
 
-				const queryArgs: Record<string, unknown> = {
-					notebook_id: notebookId,
-					query: trimmedQuery,
-					source_ids: mergedSourceIds,
-					timeout: this.getSafeQueryTimeoutSeconds(),
-				};
+			const queryArgs: Record<string, unknown> = {
+				notebook_id: notebookId,
+				query: trimmedQuery,
+				source_ids: mergedSourceIds,
+				timeout: this.getSafeQueryTimeoutSeconds(),
+			};
 			if (conversation.notebookConversationId) {
 				queryArgs.conversation_id = conversation.notebookConversationId;
 			}
@@ -822,23 +840,8 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			markSourceUsed: (path: string, protectedCap: number) => this.store.markSourceUsed(path, protectedCap),
 			getEvictionCandidatePath: () => this.store.getEvictionCandidatePath(),
 			removeSourceByPath: (path: string) => this.store.removeSourceByPath(path),
-			readSourceContent: async (path: string) => {
-				const file = this.app.vault.getAbstractFileByPath(path);
-				if (!(file instanceof TFile)) {
-					return null;
-				}
-				try {
-					return await this.app.vault.cachedRead(file);
-				} catch (error) {
-					this.logger.warn("Failed to read source content", {
-						path,
-						error: getErrorMessage(error),
-					});
-					return null;
-				}
-			},
+			prepareUploadPlan: async (path: string) => this.prepareUploadPlan(path),
 			pathExists: (path: string) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
-			hashText: (content: string) => this.hashText(content),
 			logDebug: (message: string, payload?: unknown) => this.logger.debug(message, payload),
 			logWarn: (message: string, payload?: unknown) => this.logger.warn(message, payload),
 		};
@@ -1134,6 +1137,81 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			hash = Math.imul(hash, 16777619);
 		}
 		return (hash >>> 0).toString(16);
+	}
+
+	private hashBinary(value: Uint8Array): string {
+		let hash = 2166136261;
+		for (let index = 0; index < value.length; index += 1) {
+			hash ^= value[index] ?? 0;
+			hash = Math.imul(hash, 16777619);
+		}
+		return `${value.length.toString(16)}-${(hash >>> 0).toString(16)}`;
+	}
+
+	private async prepareUploadPlan(path: string): Promise<SourceUploadPlan | null> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) {
+			return null;
+		}
+
+		const uploadMethod = getUploadMethodForPath(path);
+		if (!uploadMethod) {
+			return null;
+		}
+
+		if (uploadMethod === "text") {
+			try {
+				const textContent = await this.app.vault.cachedRead(file);
+				return buildTextUploadPlan({
+					path,
+					text: textContent,
+					contentHash: this.hashText(textContent),
+				});
+			} catch (error) {
+				this.logger.warn("Failed to read text source content", {
+					path,
+					error: getErrorMessage(error),
+				});
+				return null;
+			}
+		}
+
+		const absoluteFilePath = this.resolveAbsoluteVaultFilePath(path);
+		if (!absoluteFilePath) {
+			this.logger.warn("Failed to resolve full path for file upload", { path });
+			return null;
+		}
+
+		try {
+			const content = await this.app.vault.readBinary(file);
+			return buildFileUploadPlan({
+				path,
+				filePath: absoluteFilePath,
+				contentHash: this.hashBinary(new Uint8Array(content)),
+			});
+		} catch (error) {
+			this.logger.warn("Failed to read binary source content", {
+				path,
+				error: getErrorMessage(error),
+			});
+			return null;
+		}
+	}
+
+	private resolveAbsoluteVaultFilePath(path: string): string | null {
+		const adapter = this.app.vault.adapter;
+		if (!(adapter instanceof FileSystemAdapter)) {
+			return null;
+		}
+		try {
+			return adapter.getFullPath(path);
+		} catch (error) {
+			this.logger.warn("Vault adapter getFullPath failed", {
+				path,
+				error: getErrorMessage(error),
+			});
+			return null;
+		}
 	}
 
 	private registerVaultEvents(): void {

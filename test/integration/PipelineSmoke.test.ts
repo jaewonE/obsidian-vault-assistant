@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BM25 } from "../../src/search/BM25";
 import { ensureSourcesForPaths } from "../../src/plugin/SourcePreparationService";
+import { buildTextUploadPlan } from "../../src/plugin/sourceUploadPolicy";
 import { PluginDataStore } from "../../src/storage/PluginDataStore";
 import type { ConversationRecord } from "../../src/types";
 
@@ -98,9 +99,18 @@ test("pipeline smoke: bm25 selection -> source preparation -> persisted metadata
 			markSourceUsed: (path, protectedCap) => store.markSourceUsed(path, protectedCap),
 			getEvictionCandidatePath: () => store.getEvictionCandidatePath(),
 			removeSourceByPath: (path) => store.removeSourceByPath(path),
-			readSourceContent: async (path) => docs[path as keyof typeof docs] ?? null,
+			prepareUploadPlan: async (path) => {
+				const content = docs[path as keyof typeof docs] ?? null;
+				if (content === null) {
+					return null;
+				}
+				return buildTextUploadPlan({
+					path,
+					text: content,
+					contentHash: hashText(content),
+				});
+			},
 			pathExists: (path) => path in docs,
-			hashText,
 			logDebug: () => {},
 			logWarn: () => {},
 		},

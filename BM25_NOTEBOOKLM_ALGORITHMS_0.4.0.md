@@ -1,19 +1,19 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.4.0)
+# BM25 + NotebookLM Algorithms and Implementation (v0.4.1)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.4.0` for:
+This document specifies the production algorithms used in `v0.4.1` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
 
-`v0.4.0` keeps BM25 scoring/indexing behavior unchanged and adds an orthogonal user-driven source inclusion flow.
+`v0.4.1` keeps BM25 scoring/indexing behavior unchanged and adds extension-aware source upload planning for explicit source selections.
 
 ---
 
-## 2. Runtime architecture (v0.4.0)
+## 2. Runtime architecture (v0.4.1)
 
 Main components:
 
@@ -29,6 +29,7 @@ Main components:
   - `src/plugin/SourcePreparationService.ts`
   - `src/plugin/NotebookLMPlugin.ts`
   - `src/plugin/historySourceIds.ts`
+  - `src/plugin/sourceUploadPolicy.ts`
 - Persistence/state:
   - `src/storage/PluginDataStore.ts`
 - UI:
@@ -153,17 +154,25 @@ If BM25 selects zero documents but explicit paths exist, query still proceeds wi
 
 ---
 
-## 8. Source preparation content-read update
+## 8. Source preparation upload strategy update
 
-Implementation: `src/plugin/SourcePreparationService.ts`, `src/plugin/NotebookLMPlugin.ts`
+Implementation: `src/plugin/SourcePreparationService.ts`, `src/plugin/NotebookLMPlugin.ts`, `src/plugin/sourceUploadPolicy.ts`
 
-`SourcePreparationDependencies.readMarkdown` was generalized to:
+Source preparation now builds an upload plan per selected path:
 
-`readSourceContent(path): Promise<string | null>`
+1. Validate extension against allowlist.
+2. Select upload method by extension:
+   - text upload (`source_type=text`) for `.md` / `.txt`
+   - file upload (`source_type=file`) for other allowed extensions
+3. Build a single-part upload plan (with future-ready part structure for subdivision/splitting).
+4. Hash content by method:
+   - text hash for text uploads
+   - binary hash for file uploads
+5. Reuse/replace/rename detection still uses `contentHash` as before.
 
-This allows `@@` mode to route non-markdown vault files through the same source preparation pipeline.
+Disallowed extensions are excluded before source preparation and surfaced to users via notice.
 
-Read failures are handled as skip/null with warning logs to preserve query stability.
+Read/path-resolution failures are handled as skip/null with warning logs to preserve query stability.
 
 ---
 
@@ -209,4 +218,5 @@ Added/updated tests:
 - `test/plugin/ExplicitSourceSelectionService.test.ts`
 - `test/plugin/explicitSelectionMerge.test.ts`
 - `test/storage/PluginDataStore.test.ts` (explicit selection normalization)
+- `test/plugin/NotebookLMPlugin.sources.test.ts` (non-text extension uploads as `source_type=file`)
 - existing source preparation + integration tests remain green.

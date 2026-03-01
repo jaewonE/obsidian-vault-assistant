@@ -5,6 +5,11 @@ import {
 	SourcePreparationDependencies,
 } from "../../src/plugin/SourcePreparationService";
 import {
+	buildFileUploadPlan,
+	buildTextUploadPlan,
+	getUploadMethodForPath,
+} from "../../src/plugin/sourceUploadPolicy";
+import {
 	SOURCE_TARGET_CAPACITY,
 	SourceEvictionRecord,
 	SourceRegistryEntry,
@@ -185,14 +190,32 @@ function createHarness(options: {
 			bySourceId.delete(entry.sourceId);
 			return entry;
 		},
-		readSourceContent: async (path: string) => {
+		prepareUploadPlan: async (path: string) => {
 			if (!existingPaths.has(path)) {
 				return null;
 			}
-			return files[path] ?? null;
+			const content = files[path] ?? null;
+			if (content === null) {
+				return null;
+			}
+			const uploadMethod = getUploadMethodForPath(path);
+			if (uploadMethod === "text") {
+				return buildTextUploadPlan({
+					path,
+					text: content,
+					contentHash: hashText(content),
+				});
+			}
+			if (uploadMethod === "file") {
+				return buildFileUploadPlan({
+					path,
+					filePath: `/vault/${path}`,
+					contentHash: hashText(`binary:${content}`),
+				});
+			}
+			return null;
 		},
 		pathExists: (path: string) => existingPaths.has(path),
-		hashText,
 		logDebug: () => {},
 		logWarn: () => {},
 	};
@@ -336,4 +359,30 @@ test("evicts managed candidate when remote size is at capacity", async () => {
 	assert.equal(harness.evictions[0]?.path, "managed.md");
 	assert.equal(harness.calls[0]?.name, "source_delete");
 	assert.equal(harness.calls[1]?.name, "source_add");
+});
+
+test("uses file upload args for non-text extensions", async () => {
+	const harness = createHarness({
+		files: {
+			"images/photo.png": "binary-image-data",
+		},
+		existingPaths: new Set(["images/photo.png"]),
+		addSourceIds: ["source-image"],
+	});
+
+	const result = await ensureSourcesForPaths(
+		{
+			notebookId: "nb-1",
+			paths: ["images/photo.png"],
+			evictions: harness.evictions,
+			protectedCapacity: 10,
+		},
+		harness.deps,
+	);
+
+	assert.equal(result["images/photo.png"], "source-image");
+	assert.equal(harness.calls[0]?.name, "source_add");
+	assert.equal(harness.calls[0]?.args.source_type, "file");
+	assert.equal(harness.calls[0]?.args.file_path, "/vault/images/photo.png");
+	assert.equal(harness.calls[0]?.args.text, undefined);
 });

@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.4.0`
+Version: `0.4.1`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -26,6 +26,10 @@ The plugin provides a right-sidebar chat workflow:
   - live search updates while typing
   - keyboard and mouse selection support (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`)
   - supports search terms with spaces and underscore-to-space matching
+- Extension-aware source upload:
+  - `.md` and `.txt` are uploaded as `source_type=text`
+  - allowed non-text/media extensions are uploaded as `source_type=file`
+  - disallowed extensions from `@`/`@@` selections are ignored with a notice showing ignored count and extensions
 - Result list UX:
   - left-aligned icon, filename, path
   - extension-based icons for folder/markdown/pdf/image/video/code/common file types
