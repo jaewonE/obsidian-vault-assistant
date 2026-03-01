@@ -19,6 +19,7 @@ import {
 	AddFilePathSearchItem,
 	AddFilePathSelectionKind,
 	ComposerSelectionItem,
+	ComposerSelectionUploadStatus,
 	ConversationQueryMetadata,
 	ConversationRecord,
 	DEFAULT_SETTINGS,
@@ -77,6 +78,24 @@ const SETTINGS_LIMITS = {
 
 type QueryStepKey = "search" | "upload" | "response";
 
+type ExplicitUploadPathStatus = "pending" | "checking" | "uploading" | "ready" | "failed";
+
+interface ExplicitUploadPathState {
+	status: ExplicitUploadPathStatus;
+	uploaded: boolean;
+	error?: string;
+}
+
+interface ExplicitUploadScopeState {
+	total: number;
+	completed: number;
+	failed: number;
+	currentPath: string | null;
+	currentIndex: number;
+	uploadedPaths: Set<string>;
+	reusedPaths: Set<string>;
+}
+
 export default class NotebookLMObsidianPlugin extends Plugin {
 	private store!: PluginDataStore;
 	private logger!: Logger;
@@ -87,6 +106,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private remoteSourceIds = new Set<string>();
 	private queryProgress: QueryProgressState | null = null;
 	private queryProgressListeners = new Set<(progress: QueryProgressState | null) => void>();
+	private explicitUploadQueue: string[] = [];
+	private explicitUploadState = new Map<string, ExplicitUploadPathState>();
+	private explicitUploadStateListeners = new Set<() => void>();
+	private explicitUploadCurrentPath: string | null = null;
+	private explicitUploadWorkerPromise: Promise<void> | null = null;
+	private explicitUploadUpdateWaiters = new Set<() => void>();
+	private sourcePreparationMutex: Promise<void> = Promise.resolve();
 
 	get settings(): NotebookLMPluginSettings {
 		return this.store.getSettings();
@@ -113,6 +139,14 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		listener(this.queryProgress);
 		return () => {
 			this.queryProgressListeners.delete(listener);
+		};
+	}
+
+	onExplicitUploadStateChange(listener: () => void): () => void {
+		this.explicitUploadStateListeners.add(listener);
+		listener();
+		return () => {
+			this.explicitUploadStateListeners.delete(listener);
 		};
 	}
 
@@ -214,6 +248,120 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			sourceIds.add(resolvedSourceId);
 		}
 		return [...sourceIds];
+	}
+
+	getComposerSelectionUploadStatus(selection: ComposerSelectionItem): ComposerSelectionUploadStatus {
+		const allowedPaths = filterAllowedUploadPaths(selection.filePaths).allowedPaths;
+		const scope = this.getExplicitUploadScopeState(allowedPaths);
+		if (scope.total <= 0) {
+			return {
+				state: "idle",
+				total: 0,
+				completed: 0,
+				percent: 100,
+			};
+		}
+
+		const completed = Math.min(scope.total, scope.completed);
+		const settled = Math.min(scope.total, scope.completed + scope.failed);
+		const percent = Math.min(100, Math.max(0, Math.round((completed / scope.total) * 100)));
+		return {
+			state: scope.currentPath || settled < scope.total ? "uploading" : "complete",
+			total: scope.total,
+			completed,
+			percent,
+		};
+	}
+
+	enqueueExplicitSourceUploads(paths: string[]): void {
+		const allowedPathsResult = filterAllowedUploadPaths(paths);
+		const pathsToQueue = allowedPathsResult.allowedPaths;
+		if (pathsToQueue.length === 0) {
+			return;
+		}
+
+		let queuedAny = false;
+		let stateChanged = false;
+		for (const path of pathsToQueue) {
+			if (!path) {
+				continue;
+			}
+			if (this.getPreparedSourceIdForPath(path)) {
+				const existingState = this.explicitUploadState.get(path);
+				if (existingState?.status !== "ready" || existingState.uploaded) {
+					this.explicitUploadState.set(path, { status: "ready", uploaded: false });
+					stateChanged = true;
+				}
+				continue;
+			}
+			const existingState = this.explicitUploadState.get(path);
+			if (
+				existingState &&
+				(existingState.status === "pending" ||
+					existingState.status === "checking" ||
+					existingState.status === "uploading")
+			) {
+				continue;
+			}
+			this.explicitUploadState.set(path, { status: "pending", uploaded: false });
+			stateChanged = true;
+			this.explicitUploadQueue.push(path);
+			queuedAny = true;
+		}
+
+		if (queuedAny || stateChanged) {
+			this.emitExplicitUploadUpdate();
+		}
+		if (queuedAny) {
+			this.startExplicitUploadWorker();
+		}
+	}
+
+	cancelExplicitSourceUploads(paths: string[]): void {
+		const allowedPaths = filterAllowedUploadPaths(paths).allowedPaths;
+		const cancelSet = new Set(allowedPaths.filter((path) => typeof path === "string" && path.length > 0));
+		if (cancelSet.size === 0) {
+			return;
+		}
+
+		let changed = false;
+		const nextQueue = this.explicitUploadQueue.filter((queuedPath) => {
+			if (!cancelSet.has(queuedPath)) {
+				return true;
+			}
+			this.explicitUploadState.set(queuedPath, {
+				status: "failed",
+				uploaded: false,
+				error: "Upload interrupted by user.",
+			});
+			changed = true;
+			return false;
+		});
+		if (nextQueue.length !== this.explicitUploadQueue.length) {
+			this.explicitUploadQueue = nextQueue;
+		}
+
+		for (const path of cancelSet) {
+			if (path === this.explicitUploadCurrentPath) {
+				continue;
+			}
+			const state = this.explicitUploadState.get(path);
+			if (!state) {
+				continue;
+			}
+			if (state.status === "pending" || state.status === "checking" || state.status === "uploading") {
+				this.explicitUploadState.set(path, {
+					status: "failed",
+					uploaded: false,
+					error: "Upload interrupted by user.",
+				});
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			this.emitExplicitUploadUpdate();
+		}
 	}
 
 	searchAddFilePathCandidates(term: string, mode: AddFilePathMode): AddFilePathSearchItem[] {
@@ -453,9 +601,11 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				throw new Error(
 					"No sources are available for this question. Enable Search vault or add files/paths with @.",
 				);
-			}
-			const selectedCount = selectedUploadPaths.length;
-			const searchDetailParts: string[] = [];
+				}
+				const selectedCount = selectedUploadPaths.length;
+				const explicitUploadPathSet = new Set(explicitUploadPaths);
+				const bm25OnlyUploadPaths = selectedUploadPaths.filter((path) => !explicitUploadPathSet.has(path));
+				const searchDetailParts: string[] = [];
 			if (includeBm25Search) {
 				searchDetailParts.push(
 					`BM25 selected ${bm25SelectedPaths.length} source${bm25SelectedPaths.length === 1 ? "" : "s"} for this question`,
@@ -469,60 +619,120 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				);
 			}
 			currentStep = "upload";
-			updateProgress({
-				steps: {
-					search: "done",
-					upload: "active",
-					response: "pending",
-				},
-				searchDetail: `${searchDetailParts.join("; ")}.`,
-				uploadDetail: `Preparing ${selectedCount} selected document${selectedCount === 1 ? "" : "s"}...`,
-				responseDetail: "Waiting for uploads to finish...",
-				upload: {
-					total: selectedCount,
-					currentIndex: 0,
-					currentPath: null,
-					uploadedCount: 0,
-					reusedCount: 0,
-				},
-			});
+				updateProgress({
+					steps: {
+						search: "done",
+						upload: "active",
+						response: "pending",
+					},
+					searchDetail: `${searchDetailParts.join("; ")}.`,
+					uploadDetail: `Preparing ${selectedCount} selected document${selectedCount === 1 ? "" : "s"}...`,
+					responseDetail: "Waiting for uploads to finish...",
+					upload: {
+						total: selectedCount,
+						currentIndex: 0,
+						currentPath: null,
+						uploadedCount: 0,
+						reusedCount: 0,
+					},
+				});
 
-			const uploadedPaths = new Set<string>();
-			const reusedPaths = new Set<string>();
-			const pathToSourceId = await this.ensureSourcesForPaths(
-				notebookId,
-				selectedUploadPaths,
-				queryMetadata.evictions,
-				(sourceProgress) => {
-					if (sourceProgress.action === "ready") {
-						if (sourceProgress.uploaded) {
-							uploadedPaths.add(sourceProgress.path);
-						} else {
-							reusedPaths.add(sourceProgress.path);
-						}
-					}
+				const explicitUploadedPaths = new Set<string>();
+				const explicitReusedPaths = new Set<string>();
+				const bm25UploadedPaths = new Set<string>();
+				const bm25ReusedPaths = new Set<string>();
+				const pathToSourceId: Record<string, string> = {};
 
-					let uploadDetail = `Checking (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`;
-					if (sourceProgress.action === "uploading") {
-						uploadDetail = `Uploading (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`;
-					} else if (sourceProgress.action === "ready") {
-						uploadDetail = sourceProgress.uploaded
-							? `Uploaded (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`
-							: `Already uploaded (${sourceProgress.index}/${sourceProgress.total}): ${sourceProgress.path}`;
-					}
-
+				const updateUploadProgress = (params: {
+					uploadDetail: string;
+					currentIndex: number;
+					currentPath: string | null;
+				}): void => {
 					updateProgress({
-						uploadDetail,
+						uploadDetail: params.uploadDetail,
 						upload: {
-							total: sourceProgress.total,
-							currentIndex: sourceProgress.index,
-							currentPath: sourceProgress.path,
-							uploadedCount: uploadedPaths.size,
-							reusedCount: reusedPaths.size,
+							total: selectedCount,
+							currentIndex: Math.max(0, Math.min(selectedCount, params.currentIndex)),
+							currentPath: params.currentPath,
+							uploadedCount: explicitUploadedPaths.size + bm25UploadedPaths.size,
+							reusedCount: explicitReusedPaths.size + bm25ReusedPaths.size,
 						},
 					});
-				},
-			);
+				};
+
+				if (explicitUploadPaths.length > 0) {
+					await this.waitForExplicitUploads(explicitUploadPaths, (scope) => {
+						explicitUploadedPaths.clear();
+						for (const path of scope.uploadedPaths) {
+							explicitUploadedPaths.add(path);
+						}
+						explicitReusedPaths.clear();
+						for (const path of scope.reusedPaths) {
+							explicitReusedPaths.add(path);
+						}
+
+						let uploadDetail = `Preparing explicit sources (${scope.completed}/${scope.total})...`;
+						if (scope.currentPath) {
+							const pathState = this.explicitUploadState.get(scope.currentPath);
+							const actionLabel =
+								pathState?.status === "uploading"
+									? "Uploading"
+									: pathState?.status === "checking"
+										? "Checking"
+										: "Preparing";
+							uploadDetail = `${actionLabel} (${scope.currentIndex}/${selectedCount}): ${scope.currentPath}`;
+						} else if (scope.total > 0 && scope.completed + scope.failed >= scope.total) {
+							uploadDetail = `Explicit selection ready (${scope.completed}/${scope.total}).`;
+						}
+
+						updateUploadProgress({
+							uploadDetail,
+							currentIndex: scope.currentPath ? scope.currentIndex : scope.completed + scope.failed,
+							currentPath: scope.currentPath,
+						});
+					});
+
+					for (const path of explicitUploadPaths) {
+						const sourceId = this.getPreparedSourceIdForPath(path);
+						if (sourceId) {
+							pathToSourceId[path] = sourceId;
+						}
+					}
+				}
+
+				if (bm25OnlyUploadPaths.length > 0) {
+					const bm25PathToSourceId = await this.ensureSourcesForPaths(
+						notebookId,
+						bm25OnlyUploadPaths,
+						queryMetadata.evictions,
+						(sourceProgress) => {
+							if (sourceProgress.action === "ready") {
+								if (sourceProgress.uploaded) {
+									bm25UploadedPaths.add(sourceProgress.path);
+								} else {
+									bm25ReusedPaths.add(sourceProgress.path);
+								}
+							}
+
+							const globalIndex = explicitUploadPaths.length + sourceProgress.index;
+							let uploadDetail = `Checking (${globalIndex}/${selectedCount}): ${sourceProgress.path}`;
+							if (sourceProgress.action === "uploading") {
+								uploadDetail = `Uploading (${globalIndex}/${selectedCount}): ${sourceProgress.path}`;
+							} else if (sourceProgress.action === "ready") {
+								uploadDetail = sourceProgress.uploaded
+									? `Uploaded (${globalIndex}/${selectedCount}): ${sourceProgress.path}`
+									: `Already uploaded (${globalIndex}/${selectedCount}): ${sourceProgress.path}`;
+							}
+
+							updateUploadProgress({
+								uploadDetail,
+								currentIndex: globalIndex,
+								currentPath: sourceProgress.path,
+							});
+						},
+					);
+					Object.assign(pathToSourceId, bm25PathToSourceId);
+				}
 
 			queryMetadata.bm25Selection.selected = bm25Result
 				? bm25SelectedItems.map((item) => ({
@@ -542,14 +752,14 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				.filter((sourceId) => !excludedSourceIdSet.has(this.store.resolveSourceId(sourceId)));
 			const currentSelectionSourceIds = [...new Set([...bm25SourceIds, ...explicitSourceIds])];
 
-			const sourceIdsSet = new Set(currentSelectionSourceIds);
-			const carriedFromHistory = historicalSourceIds.filter((sourceId) => !sourceIdsSet.has(sourceId));
-			const mergedSourceIds = [...new Set([...historicalSourceIds, ...currentSelectionSourceIds])];
-			if (mergedSourceIds.length === 0) {
-				throw new Error("Failed to prepare NotebookLM sources for this query.");
-			}
-			const newlyPreparedCount = uploadedPaths.size;
-			const reusedFromSelectionCount = Math.max(0, currentSelectionSourceIds.length - newlyPreparedCount);
+				const sourceIdsSet = new Set(currentSelectionSourceIds);
+				const carriedFromHistory = historicalSourceIds.filter((sourceId) => !sourceIdsSet.has(sourceId));
+				const mergedSourceIds = [...new Set([...historicalSourceIds, ...currentSelectionSourceIds])];
+				if (mergedSourceIds.length === 0) {
+					throw new Error("Failed to prepare NotebookLM sources for this query.");
+				}
+				const newlyPreparedCount = explicitUploadedPaths.size + bm25UploadedPaths.size;
+				const reusedFromSelectionCount = Math.max(0, currentSelectionSourceIds.length - newlyPreparedCount);
 			const totalQuerySourceCount = mergedSourceIds.length;
 			queryMetadata.selectedSourceIds = mergedSourceIds;
 			queryMetadata.sourceSummary = {
@@ -838,15 +1048,17 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		evictions: SourceEvictionRecord[],
 		onProgress?: (progress: SourcePreparationProgress) => void,
 	): Promise<Record<string, string>> {
-		return ensureSourcesForPaths(
-			{
-				notebookId,
-				paths,
-				evictions,
-				protectedCapacity: this.getProtectedCapacity(),
-				onProgress,
-			},
-			this.getSourcePreparationDependencies(),
+		return this.runSourcePreparationExclusive(() =>
+			ensureSourcesForPaths(
+				{
+					notebookId,
+					paths,
+					evictions,
+					protectedCapacity: this.getProtectedCapacity(),
+					onProgress,
+				},
+				this.getSourcePreparationDependencies(),
+			),
 		);
 	}
 
@@ -1179,6 +1391,225 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			normalized.add(resolvedSourceId);
 		}
 		return normalized;
+	}
+
+	private startExplicitUploadWorker(): void {
+		if (this.explicitUploadWorkerPromise) {
+			return;
+		}
+
+		this.explicitUploadWorkerPromise = this.runExplicitUploadWorker().finally(() => {
+			this.explicitUploadWorkerPromise = null;
+			this.explicitUploadCurrentPath = null;
+			this.emitExplicitUploadUpdate();
+			if (this.explicitUploadQueue.length > 0) {
+				this.startExplicitUploadWorker();
+			}
+		});
+	}
+
+	private async runExplicitUploadWorker(): Promise<void> {
+		while (this.explicitUploadQueue.length > 0) {
+			const path = this.explicitUploadQueue.shift();
+			if (!path) {
+				continue;
+			}
+
+			if (this.getPreparedSourceIdForPath(path)) {
+				this.explicitUploadState.set(path, { status: "ready", uploaded: false });
+				this.emitExplicitUploadUpdate();
+				continue;
+			}
+
+			this.explicitUploadCurrentPath = path;
+			this.explicitUploadState.set(path, { status: "checking", uploaded: false });
+			this.emitExplicitUploadUpdate();
+
+			try {
+				const notebookId = await this.ensureNotebookReady();
+				await this.ensureSourcesForPaths(notebookId, [path], [], (sourceProgress) => {
+					const previous = this.explicitUploadState.get(path);
+					if (sourceProgress.action === "checking") {
+						this.explicitUploadState.set(path, {
+							status: "checking",
+							uploaded: previous?.uploaded ?? false,
+						});
+					} else if (sourceProgress.action === "uploading") {
+						this.explicitUploadState.set(path, {
+							status: "uploading",
+							uploaded: true,
+						});
+					} else {
+						this.explicitUploadState.set(path, {
+							status: "ready",
+							uploaded: sourceProgress.uploaded,
+						});
+					}
+					this.emitExplicitUploadUpdate();
+				});
+
+				const sourceId = this.getPreparedSourceIdForPath(path);
+				if (!sourceId) {
+					this.explicitUploadState.set(path, {
+						status: "failed",
+						uploaded: false,
+						error: "No source_id was prepared for this path.",
+					});
+				}
+			} catch (error) {
+				this.logger.warn("Explicit source pre-upload failed", {
+					path,
+					error: getErrorMessage(error),
+				});
+				this.explicitUploadState.set(path, {
+					status: "failed",
+					uploaded: false,
+					error: getErrorMessage(error),
+				});
+			} finally {
+				if (this.explicitUploadCurrentPath === path) {
+					this.explicitUploadCurrentPath = null;
+				}
+				this.emitExplicitUploadUpdate();
+			}
+		}
+	}
+
+	private emitExplicitUploadUpdate(): void {
+		for (const listener of this.explicitUploadStateListeners) {
+			try {
+				listener();
+			} catch {
+				// Ignore listener failures.
+			}
+		}
+
+		for (const waiter of this.explicitUploadUpdateWaiters) {
+			try {
+				waiter();
+			} catch {
+				// Ignore waiter failures.
+			}
+		}
+		this.explicitUploadUpdateWaiters.clear();
+	}
+
+	private waitForExplicitUploadUpdate(): Promise<void> {
+		return new Promise((resolve) => {
+			this.explicitUploadUpdateWaiters.add(resolve);
+		});
+	}
+
+	private getPreparedSourceIdForPath(path: string): string | null {
+		const entry = this.store.getSourceEntryByPath(path);
+		if (!entry || entry.stale) {
+			return null;
+		}
+		const sourceId = this.store.resolveSourceId(entry.sourceId);
+		if (!sourceId || !this.remoteSourceIds.has(sourceId)) {
+			return null;
+		}
+		return sourceId;
+	}
+
+	private getExplicitUploadScopeState(paths: string[]): ExplicitUploadScopeState {
+		const dedupedPaths = [...new Set(paths.filter((path) => typeof path === "string" && path.length > 0))];
+		const uploadedPaths = new Set<string>();
+		const reusedPaths = new Set<string>();
+		let completed = 0;
+		let failed = 0;
+		let currentPath: string | null = null;
+		let currentIndex = 0;
+
+		for (const path of dedupedPaths) {
+			const preparedSourceId = this.getPreparedSourceIdForPath(path);
+			if (preparedSourceId) {
+				completed += 1;
+				const currentState = this.explicitUploadState.get(path);
+				if (currentState?.uploaded) {
+					uploadedPaths.add(path);
+				} else {
+					reusedPaths.add(path);
+				}
+				continue;
+			}
+
+			const state = this.explicitUploadState.get(path);
+			if (!state) {
+				continue;
+			}
+			if (state.status === "ready") {
+				completed += 1;
+				if (state.uploaded) {
+					uploadedPaths.add(path);
+				} else {
+					reusedPaths.add(path);
+				}
+				continue;
+			}
+			if (state.status === "failed") {
+				failed += 1;
+				continue;
+			}
+			if (!currentPath && (state.status === "checking" || state.status === "uploading")) {
+				currentPath = path;
+			}
+		}
+
+		if (currentPath) {
+			currentIndex = Math.min(dedupedPaths.length, completed + failed + 1);
+		} else {
+			currentIndex = Math.min(dedupedPaths.length, completed + failed);
+		}
+
+		return {
+			total: dedupedPaths.length,
+			completed,
+			failed,
+			currentPath,
+			currentIndex,
+			uploadedPaths,
+			reusedPaths,
+		};
+	}
+
+	private async waitForExplicitUploads(
+		paths: string[],
+		onProgress: (scope: ExplicitUploadScopeState) => void,
+	): Promise<void> {
+		const dedupedPaths = [...new Set(paths.filter((path) => typeof path === "string" && path.length > 0))];
+		if (dedupedPaths.length === 0) {
+			onProgress({
+				total: 0,
+				completed: 0,
+				failed: 0,
+				currentPath: null,
+				currentIndex: 0,
+				uploadedPaths: new Set<string>(),
+				reusedPaths: new Set<string>(),
+			});
+			return;
+		}
+
+		this.enqueueExplicitSourceUploads(dedupedPaths);
+		while (true) {
+			const scope = this.getExplicitUploadScopeState(dedupedPaths);
+			onProgress(scope);
+			if (scope.completed + scope.failed >= scope.total) {
+				return;
+			}
+			await this.waitForExplicitUploadUpdate();
+		}
+	}
+
+	private async runSourcePreparationExclusive<T>(task: () => Promise<T>): Promise<T> {
+		const runTask = async (): Promise<T> => task();
+		const resultPromise = this.sourcePreparationMutex.then(runTask, runTask);
+		this.sourcePreparationMutex = resultPromise.then(
+			() => undefined,
+			() => undefined,
+		);
+		return resultPromise;
 	}
 
 	private toExplicitSelectionMetadata(selections: ComposerSelectionItem[]): ExplicitSelectionMetadata[] {

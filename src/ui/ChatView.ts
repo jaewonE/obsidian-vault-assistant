@@ -4,6 +4,7 @@ import type {
 	AddFilePathSearchItem,
 	ConversationQueryMetadata,
 	ComposerSelectionItem,
+	ComposerSelectionUploadStatus,
 	QueryProgressState,
 	QueryProgressStepState,
 	QuerySourceItem,
@@ -121,6 +122,11 @@ function getDisplayParentPath(path: string): string {
 	return path.length > 0 ? path : "/";
 }
 
+function getLastPathSegment(path: string): string {
+	const segments = path.split("/").filter((segment) => segment.length > 0);
+	return segments[segments.length - 1] ?? path;
+}
+
 export class ChatView extends ItemView {
 	private readonly plugin: NotebookLMPlugin;
 	private messageListEl: HTMLDivElement | null = null;
@@ -134,6 +140,7 @@ export class ChatView extends ItemView {
 	private renderVersion = 0;
 	private queryProgress: QueryProgressState | null = null;
 	private unsubscribeProgress: (() => void) | null = null;
+	private unsubscribeExplicitUploadState: (() => void) | null = null;
 	private sourceListExpandedByMessageKey = new Map<string, boolean>();
 	private composerSelections: ComposerSelectionItem[] = [];
 	private excludedSourceIds = new Set<string>();
@@ -171,6 +178,10 @@ export class ChatView extends ItemView {
 			this.queryProgress = progress;
 			this.renderMessages();
 		});
+		this.unsubscribeExplicitUploadState?.();
+		this.unsubscribeExplicitUploadState = this.plugin.onExplicitUploadStateChange(() => {
+			this.renderComposerSelections();
+		});
 		this.renderLayout();
 		this.renderMessages();
 	}
@@ -178,6 +189,8 @@ export class ChatView extends ItemView {
 	async onClose(): Promise<void> {
 		this.unsubscribeProgress?.();
 		this.unsubscribeProgress = null;
+		this.unsubscribeExplicitUploadState?.();
+		this.unsubscribeExplicitUploadState = null;
 		this.mentionItemElements = [];
 		this.mentionHoveredIndex = null;
 		this.contentEl.empty();
@@ -517,6 +530,7 @@ export class ChatView extends ItemView {
 
 		this.clearExclusionsForSelection(resolvedSelection);
 		this.composerSelections.push(resolvedSelection);
+		this.plugin.enqueueExplicitSourceUploads(resolvedSelection.filePaths);
 		if (resolved.warning) {
 			new Notice(resolved.warning, 7000);
 		}
@@ -618,11 +632,26 @@ export class ChatView extends ItemView {
 
 		for (const selection of this.composerSelections) {
 			const chipEl = this.composerSelectionsEl.createDiv({ cls: "nlm-chat-composer-selection" });
+			const uploadStatus = this.plugin.getComposerSelectionUploadStatus(selection);
+			if (uploadStatus.state === "uploading") {
+				chipEl.addClass("nlm-chat-composer-selection-uploading");
+			}
+			const chipDisplayText =
+				selection.kind === "path"
+					? `${getLastPathSegment(selection.path)} (${selection.subfileCount})`
+					: selection.label;
+			const chipTooltipText =
+				selection.kind === "path"
+					? `${selection.path} (${selection.subfileCount})`
+					: selection.path;
+
 			const openButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-open" });
 			openButtonEl.type = "button";
 			openButtonEl.addEventListener("click", () => {
 				void this.plugin.openComposerSelectionInNewTab(selection);
 			});
+			openButtonEl.setAttribute("title", chipTooltipText);
+			openButtonEl.setAttribute("aria-label", chipTooltipText);
 
 			const iconEl = openButtonEl.createSpan({ cls: "nlm-chat-composer-selection-icon" });
 			const extension = selection.kind === "file" ? selection.path.split(".").pop() : undefined;
@@ -635,22 +664,15 @@ export class ChatView extends ItemView {
 
 			openButtonEl.createSpan({
 				cls: "nlm-chat-composer-selection-label",
-				text:
-					selection.kind === "path"
-						? `${selection.path} (${selection.subfileCount})`
-						: selection.label,
+				text: chipDisplayText,
 			});
 
-			const removeButtonEl = chipEl.createEl("button", {
-				cls: "nlm-chat-composer-selection-remove",
-				text: "x",
-			});
+			const removeButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-remove" });
 			removeButtonEl.type = "button";
+			removeButtonEl.setAttribute("aria-label", `Remove source: ${selection.label}`);
+			this.renderComposerSelectionRemoveControl(removeButtonEl, uploadStatus);
 			removeButtonEl.addEventListener("click", () => {
-				const nextSelections = this.composerSelections.filter((item) => item.id !== selection.id);
-				this.excludeDeselectedSelection(selection, nextSelections);
-				this.composerSelections = nextSelections;
-				this.renderComposerSelections();
+				this.removeComposerSelection(selection);
 			});
 		}
 
@@ -675,6 +697,40 @@ export class ChatView extends ItemView {
 			cls: "nlm-chat-composer-search-toggle-text",
 			text: "Search vault",
 		});
+	}
+
+	private removeComposerSelection(selection: ComposerSelectionItem): void {
+		this.plugin.cancelExplicitSourceUploads(selection.filePaths);
+		const nextSelections = this.composerSelections.filter((item) => item.id !== selection.id);
+		this.excludeDeselectedSelection(selection, nextSelections);
+		this.composerSelections = nextSelections;
+		this.renderComposerSelections();
+	}
+
+	private renderComposerSelectionRemoveControl(
+		removeButtonEl: HTMLButtonElement,
+		uploadStatus: ComposerSelectionUploadStatus,
+	): void {
+		removeButtonEl.empty();
+		const removeSymbolEl = removeButtonEl.createSpan({
+			cls: "nlm-chat-composer-selection-remove-symbol",
+			text: "x",
+		});
+		removeSymbolEl.setAttribute("aria-hidden", "true");
+		if (uploadStatus.state !== "uploading") {
+			return;
+		}
+
+		const loadingEl = removeButtonEl.createSpan({
+			cls: "nlm-chat-composer-selection-remove-loading",
+		});
+		if (uploadStatus.total > 1) {
+			loadingEl.addClass("nlm-chat-composer-selection-remove-loading-with-percent");
+			loadingEl.createSpan({
+				cls: "nlm-chat-composer-selection-remove-loading-percent",
+				text: `${uploadStatus.percent}%`,
+			});
+		}
 	}
 
 	private renderMessages(preserveScrollPosition = false): void {
@@ -826,6 +882,9 @@ export class ChatView extends ItemView {
 	}
 
 	private resetComposerState(): void {
+		for (const selection of this.composerSelections) {
+			this.plugin.cancelExplicitSourceUploads(selection.filePaths);
+		}
 		this.composerSelections = [];
 		this.excludedSourceIds.clear();
 		this.excludedPaths.clear();

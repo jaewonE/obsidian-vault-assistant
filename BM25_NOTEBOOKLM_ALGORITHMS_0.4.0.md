@@ -1,19 +1,19 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.4.3)
+# BM25 + NotebookLM Algorithms and Implementation (v0.4.4)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.4.3` for:
+This document specifies the production algorithms used in `v0.4.4` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
 
-`v0.4.3` keeps BM25 scoring/indexing behavior unchanged and adds busy-state composer interaction continuity while preserving button-level execution guards.
+`v0.4.4` keeps BM25 scoring/indexing behavior unchanged and adds immediate explicit-source pre-upload with query-stage progress synchronization plus composer-chip upload state indicators.
 
 ---
 
-## 2. Runtime architecture (v0.4.3)
+## 2. Runtime architecture (v0.4.4)
 
 Main components:
 
@@ -145,13 +145,15 @@ For each query:
 
 `preparedPaths = dedupe(BM25Paths ∪ ExplicitPaths)`
 
-4. Prepare sources for `preparedPaths` via `ensureSourcesForPaths`.
-5. Build current source IDs from prepared BM25 + explicit paths.
-6. Build exclusion sets from composer deselections:
+4. Explicit paths are queued for immediate sequential pre-upload as soon as they are selected in composer.
+5. During query execution, explicit paths reuse/wait for the same pre-upload queue state.
+6. BM25-only paths are prepared during query upload stage.
+7. Build current source IDs from prepared BM25 + explicit paths.
+8. Build exclusion sets from composer deselections:
    - path exclusions
    - resolved source ID exclusions
-7. Merge with historical reusable source IDs (carry-over) after applying exclusions.
-8. Query NotebookLM with merged source IDs.
+9. Merge with historical reusable source IDs (carry-over) after applying exclusions.
+10. Query NotebookLM with merged source IDs.
 
 If BM25 selects zero documents but explicit paths exist, query still proceeds with explicit sources.
 
@@ -207,11 +209,18 @@ Implementation: `src/ui/ChatView.ts`, `styles.css`
    - filename with extension (or folder name)
    - muted path line with ellipsis overflow
 3. Selection creates composer chip above input.
-4. Path chips render `path (count)`.
+4. Path chips render `last-folder-name (count)` (for example `topic (23)`).
 5. Each chip has `x` removal control.
 6. Explicit chips persist after send and remain visible above composer.
 7. Chip removal contributes deselected descendants to excluded paths and excluded source IDs for subsequent queries.
 8. During in-flight query processing, composer remains interactive (input, mentions, chip controls, search toggle); only action buttons (`Send`, `New`, `History`) are disabled.
+9. Selecting an explicit file/path immediately enqueues sequential background source uploads.
+10. Query Step 2 upload progress is synchronized with this background state (completed/in-progress counts are reused).
+11. While explicit upload is in progress, chip remove control shows a circular loading indicator; after completion it reverts to `x`.
+12. Hovering an uploading chip switches its remove control to `x`, and multi-file chips show upload completion percentage text inside the loading indicator.
+13. Chip labels keep ellipsis overflow handling, and hovering a chip shows full source text via tooltip.
+14. Removing an uploading path chip interrupts that path’s queue: current in-flight file completes, remaining queued files for that path are skipped.
+15. If the same path is selected again, progress starts from already prepared files because status computation counts existing prepared source IDs.
 
 ---
 

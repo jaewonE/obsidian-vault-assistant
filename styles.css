@@ -274,13 +274,88 @@
 }
 
 .nlm-chat-composer-selection-remove {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border-radius: 999px;
 	font-size: 0.78em;
 	opacity: 0.8;
+	position: relative;
+	line-height: 1;
+}
+
+.nlm-chat-composer-selection-remove-symbol {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 100%;
+}
+
+.nlm-chat-composer-selection-remove-loading {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 999px;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.nlm-chat-composer-selection-remove-loading::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: 999px;
+	border: 2px solid var(--background-modifier-border);
+	border-top-color: var(--text-accent);
+	animation: nlm-chat-composer-chip-spin 0.85s linear infinite;
+}
+
+.nlm-chat-composer-selection-remove-loading-with-percent {
+	width: 22px;
+	height: 22px;
+	font-size: 0.5em;
+	font-weight: 700;
+}
+
+.nlm-chat-composer-selection-remove-loading-percent {
+	position: relative;
+	z-index: 1;
+	letter-spacing: -0.02em;
+}
+
+.nlm-chat-composer-selection-uploading .nlm-chat-composer-selection-remove-symbol {
+	display: none;
+}
+
+.nlm-chat-composer-selection-uploading:hover .nlm-chat-composer-selection-remove-symbol,
+.nlm-chat-composer-selection-uploading:focus-within .nlm-chat-composer-selection-remove-symbol {
+	display: inline-flex;
+}
+
+.nlm-chat-composer-selection-uploading:hover .nlm-chat-composer-selection-remove-loading,
+.nlm-chat-composer-selection-uploading:focus-within .nlm-chat-composer-selection-remove-loading {
+	display: none;
 }
 
 .nlm-chat-composer-selection-remove:hover,
 .nlm-chat-composer-selection-open:hover {
 	color: var(--text-accent);
+}
+
+@keyframes nlm-chat-composer-chip-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 .nlm-chat-composer-search-toggle {

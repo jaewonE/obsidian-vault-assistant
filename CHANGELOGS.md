@@ -2,6 +2,26 @@
 
 All notable repository changes are documented here.
 
+## [0.4.4] - 2026-03-01
+
+### Changed
+
+- Explicit `@` / `@@` selections now start immediate sequential source upload in the background as soon as they are added to the composer.
+- Query upload stage now reuses and waits on explicit pre-upload state instead of restarting from scratch for explicit paths.
+- Step 2 upload progress is synchronized with in-flight explicit uploads, so submitting mid-upload reflects already completed counts (for example `2/5` while the 3rd file uploads).
+- Source preparation execution is now serialized through a mutex to prevent concurrent upload/replace races between background explicit pre-upload and query-time upload paths.
+- Composer source chips now render explicit-upload status:
+  - uploading chips show a circular loading indicator in place of `x`
+  - hovering an uploading chip temporarily shows `x` so the source can still be removed immediately
+  - multi-file chips show upload completion percent (`%`) in the center of the loading indicator
+- Composer source chip readability was improved:
+  - path chips now show only the last folder segment plus file count (for example `topic (23)`)
+  - chip text still truncates with `...`, and hovering a chip shows full source text via tooltip
+- Interrupting an in-flight explicit path upload by removing its chip now cancels only remaining queued files for that path:
+  - current in-progress file is allowed to finish
+  - subsequent files for that deselected path are skipped so the worker can proceed to other queued sources
+  - re-adding the same path later resumes progress from already uploaded files (for example `6/10` starts at `60%`)
+
 ## [0.4.3] - 2026-03-01
 
 ### Changed

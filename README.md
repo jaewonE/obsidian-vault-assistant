@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.4.3`
+Version: `0.4.4`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -21,12 +21,14 @@ The plugin provides a right-sidebar chat workflow:
 - User questions in bubbles, NotebookLM answers rendered as markdown
 - Live 3-step progress UI (search -> upload -> response)
 - During query processing, composer interactions stay enabled (input, mention search, chip actions, `Search vault` toggle); only `Send`, `New`, and `History` are disabled.
+- Step 2 upload progress is synchronized with explicit pre-upload state (for example, `2/5` can be shown if Submit is pressed during the 3rd upload).
 - Explicit source selection in composer:
   - type `@` for markdown-only file/path search
   - type `@@` for all-file file/path search
   - live search updates while typing
   - keyboard and mouse selection support (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`)
   - supports search terms with spaces and underscore-to-space matching
+  - selected files/paths start sequential source upload immediately after selection
 - Extension-aware source upload:
   - `.md` and `.txt` are uploaded as `source_type=text`
   - allowed non-text/media extensions are uploaded as `source_type=file`
@@ -36,9 +38,15 @@ The plugin provides a right-sidebar chat workflow:
   - extension-based icons for folder/markdown/pdf/image/video/code/common file types
 - Selected source chips above composer:
   - file/path chips are clickable
-  - path chips include descendant file count (for example `docs/topic (4)`)
+  - path chips show only the last folder name and include descendant file count (for example `topic (4)`)
+  - hovering a chip shows full source text in a small tooltip (`title`) so truncated names can be read fully
   - explicit `@` / `@@` chips remain visible across follow-up questions in the same tab
-  - each chip removable via `x`
+  - during explicit background upload, each chip shows a circular loading indicator in place of `x`
+  - hovering an uploading chip switches the indicator to `x` so removal is still immediate
+  - for multi-file selections (for example folder selections), loading indicator center text shows upload completion percentage
+  - each chip remains removable via `x`
+  - if an uploading path chip is removed mid-upload, the current file is allowed to finish and remaining queued files for that path are skipped
+  - if that path is re-added later, progress starts from already uploaded files (for example `6/10` starts at `60%`)
   - removing a chip excludes that file/path source ID(s) from subsequent query `source_ids`
   - path chip click opens folder note only when `path/name/name.md|canvas|base` exists
 - Path guardrails:

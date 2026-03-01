@@ -60,6 +60,13 @@ export interface ComposerSelectionItem {
 	subfileCount: number;
 }
 
+export interface ComposerSelectionUploadStatus {
+	state: "idle" | "uploading" | "complete";
+	total: number;
+	completed: number;
+	percent: number;
+}
+
 export interface ResolveComposerSelectionResult {
 	selection: ComposerSelectionItem | null;
 	warning?: string;

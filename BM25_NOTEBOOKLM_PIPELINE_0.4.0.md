@@ -1,20 +1,23 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.3)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.4)
 
 ## 1. Scope
 
-This document defines the `v0.4.3` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
+This document defines the `v0.4.4` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
 
 ## 2. Pipeline stages
 
 1. User enters query text in chat composer.
 2. Optional explicit selections are added via `@`/`@@` and remain visible as chips.
-3. Optional chip deselection (`x`) records excluded paths/source IDs.
-4. BM25 runs on markdown notes.
-5. BM25 paths and explicit paths are merged/deduplicated with deselected paths removed.
-6. Merged paths are prepared/uploaded as NotebookLM sources.
-7. Current query source IDs are merged with bounded history source IDs after excluded source IDs are removed.
-8. NotebookLM query executes with merged `source_ids`.
-9. Conversation/query metadata is persisted.
+3. Explicit selections are queued for immediate sequential background source upload.
+4. Uploading chips show circular loading UI in place of `x`; completed chips show `x`.
+5. Hovering an uploading chip switches the loading UI to `x` so the source can still be removed.
+6. Optional chip deselection (`x`) records excluded paths/source IDs.
+7. BM25 runs on markdown notes.
+8. BM25 paths and explicit paths are merged/deduplicated with deselected paths removed.
+9. Explicit paths reuse/wait for in-flight background upload state; BM25-only paths are uploaded in query stage.
+10. Current query source IDs are merged with bounded history source IDs after excluded source IDs are removed.
+11. NotebookLM query executes with merged `source_ids`.
+12. Conversation/query metadata is persisted.
 
 ## 3. Requirement-to-implementation mapping
 
@@ -31,9 +34,17 @@ This document defines the `v0.4.3` end-to-end behavior with explicit file/path a
 | Path > 15 descendants shows time-cost warning | `PATH_SELECTION_WARNING_SUBFILE_THRESHOLD = 15` in `ExplicitSourceSelectionService` + `Notice` in `ChatView` |
 | Path > 200 descendants is rejected with notification | `PATH_SELECTION_REJECT_SUBFILE_THRESHOLD = 200` in `ExplicitSourceSelectionService` + `Notice` in `ChatView` |
 | Selected items visible above query input | `src/ui/ChatView.ts` composer chips |
-| Path chip shows descendant count `(N)` | `src/ui/ChatView.ts` chip label formatting |
+| Path chip shows last folder name and descendant count `(N)` | `src/ui/ChatView.ts` chip label formatting |
+| Truncated chip text can be inspected via hover tooltip with full source text | `src/ui/ChatView.ts` (`title`/`aria-label` on chip button) |
 | Each selected item removable via `x` | `src/ui/ChatView.ts` chip remove button |
 | Explicit chips remain visible after send in the same tab | `src/ui/ChatView.ts` (`sendMessage` no longer clears `composerSelections`) |
+| Explicit selections start immediate sequential source upload before query submit | `src/ui/ChatView.ts` (`selectMentionCandidate`) + `NotebookLMPlugin.enqueueExplicitSourceUploads` |
+| Query upload stage reuses/synchronizes explicit pre-upload progress (`2/5`-style mid-flight continuity) | `NotebookLMPlugin.waitForExplicitUploads` + `NotebookLMPlugin.handleUserQuery` |
+| Uploading chips show circular loading UI and completed chips show `x` | `src/ui/ChatView.ts` (`renderComposerSelectionRemoveControl`) + `styles.css` |
+| Hovering an uploading chip displays `x` (removal remains available during upload) | `styles.css` (`.nlm-chat-composer-selection-uploading` hover/focus rules) |
+| Multi-file chip loading UI shows upload completion percent in center | `src/plugin/NotebookLMPlugin.ts` (`getComposerSelectionUploadStatus`) + `src/ui/ChatView.ts` + `styles.css` |
+| Removing an uploading path chip cancels remaining queued files for that path while letting current file finish | `src/ui/ChatView.ts` (`removeComposerSelection`) + `NotebookLMPlugin.cancelExplicitSourceUploads` |
+| Re-adding an interrupted path resumes progress from already prepared files | `NotebookLMPlugin.getComposerSelectionUploadStatus` + existing source registry lookup (`getPreparedSourceIdForPath`) |
 | During in-flight query processing, composer input and selection controls remain interactive | `src/ui/ChatView.ts` (`setBusy`, `handleComposerInputChanged`, `renderMentionPanel`, search toggle rendering) |
 | Only `Send`, `New`, and `History` are disabled while busy | `src/ui/ChatView.ts` (`setBusy`) |
 | Deselecting chip excludes selected descendants from subsequent source selection scope | `src/ui/ChatView.ts` (`excludeDeselectedSelection`) + `NotebookLMPlugin.handleUserQuery` (`excludedPaths`) |
@@ -85,7 +96,7 @@ Build/type checks:
 
 - `npm run build`
 
-## 7. Out of scope for v0.4.3
+## 7. Out of scope for v0.4.4
 
 - Slash command execution runtime (command action dispatch)
 - Multi-select from a single mention search session
