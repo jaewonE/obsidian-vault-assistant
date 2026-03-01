@@ -23,3 +23,18 @@ test("buildReusableSourceIds uses recency, dedupe, and max cap", () => {
 
 	assert.deepEqual(result, ["e", "a-new", "f-new", "c"]);
 });
+
+test("buildReusableSourceIds excludes deselected source ids", () => {
+	const queryMetadata = [{ selectedSourceIds: ["a", "b"] }, { selectedSourceIds: ["c", "d"] }] as never;
+	const remoteSourceIds = new Set(["a", "b", "c", "d"]);
+
+	const result = buildReusableSourceIds({
+		queryMetadata,
+		resolveSourceId: (sourceId: string) => sourceId,
+		remoteSourceIds,
+		maxCount: 10,
+		excludedSourceIds: new Set(["d", "b"]),
+	});
+
+	assert.deepEqual(result, ["c", "a"]);
+});

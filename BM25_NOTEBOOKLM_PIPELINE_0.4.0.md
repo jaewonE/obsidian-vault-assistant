@@ -1,19 +1,20 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.1)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.2)
 
 ## 1. Scope
 
-This document defines the `v0.4.1` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
+This document defines the `v0.4.2` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
 
 ## 2. Pipeline stages
 
 1. User enters query text in chat composer.
-2. Optional explicit selections are added via `@`/`@@`.
-3. BM25 runs on markdown notes.
-4. BM25 paths and explicit paths are merged and deduplicated.
-5. Merged paths are prepared/uploaded as NotebookLM sources.
-6. Current query source IDs are merged with bounded history source IDs.
-7. NotebookLM query executes with merged `source_ids`.
-8. Conversation/query metadata is persisted.
+2. Optional explicit selections are added via `@`/`@@` and remain visible as chips.
+3. Optional chip deselection (`x`) records excluded paths/source IDs.
+4. BM25 runs on markdown notes.
+5. BM25 paths and explicit paths are merged/deduplicated with deselected paths removed.
+6. Merged paths are prepared/uploaded as NotebookLM sources.
+7. Current query source IDs are merged with bounded history source IDs after excluded source IDs are removed.
+8. NotebookLM query executes with merged `source_ids`.
+9. Conversation/query metadata is persisted.
 
 ## 3. Requirement-to-implementation mapping
 
@@ -32,6 +33,9 @@ This document defines the `v0.4.1` end-to-end behavior with explicit file/path a
 | Selected items visible above query input | `src/ui/ChatView.ts` composer chips |
 | Path chip shows descendant count `(N)` | `src/ui/ChatView.ts` chip label formatting |
 | Each selected item removable via `x` | `src/ui/ChatView.ts` chip remove button |
+| Explicit chips remain visible after send in the same tab | `src/ui/ChatView.ts` (`sendMessage` no longer clears `composerSelections`) |
+| Deselecting chip excludes selected descendants from subsequent source selection scope | `src/ui/ChatView.ts` (`excludeDeselectedSelection`) + `NotebookLMPlugin.handleUserQuery` (`excludedPaths`) |
+| Deselecting chip excludes resolved source IDs from final query `source_ids` (including history carry-over) | `src/ui/ChatView.ts` (`excludedSourceIds`) + `src/plugin/historySourceIds.ts` + `NotebookLMPlugin.handleUserQuery` |
 | Clicking selected file opens note | `src/plugin/NotebookLMPlugin.ts` (`openComposerSelectionInNewTab`) |
 | Clicking selected path opens folder note only if exists (`.md`, `.canvas`, `.base`) | `ExplicitSourceSelectionService.resolveFolderNotePath` + `NotebookLMPlugin.openComposerSelectionInNewTab` |
 | Explicit selections are added in addition to BM25 selections | `src/plugin/explicitSelectionMerge.ts` + `NotebookLMPlugin.handleUserQuery` |
@@ -70,6 +74,7 @@ Automated:
 - `test/ui/pathMention.test.ts`
 - `test/plugin/ExplicitSourceSelectionService.test.ts`
 - `test/plugin/explicitSelectionMerge.test.ts`
+- `test/plugin/historySourceIds.test.ts` (excluded source IDs removed from carry-over)
 - `test/plugin/NotebookLMPlugin.sources.test.ts` (file upload args for non-text extensions)
 - `test/storage/PluginDataStore.test.ts` (explicit metadata normalization)
 - existing source-preparation and integration tests (`test/plugin/*`, `test/integration/PipelineSmoke.test.ts`)
@@ -78,7 +83,7 @@ Build/type checks:
 
 - `npm run build`
 
-## 7. Out of scope for v0.4.1
+## 7. Out of scope for v0.4.2
 
 - Slash command execution runtime (command action dispatch)
 - Multi-select from a single mention search session

@@ -136,6 +136,8 @@ export class ChatView extends ItemView {
 	private unsubscribeProgress: (() => void) | null = null;
 	private sourceListExpandedByMessageKey = new Map<string, boolean>();
 	private composerSelections: ComposerSelectionItem[] = [];
+	private excludedSourceIds = new Set<string>();
+	private excludedPaths = new Set<string>();
 	private mentionCandidates: AddFilePathSearchItem[] = [];
 	private mentionItemElements: HTMLButtonElement[] = [];
 	private mentionSelectionIndex = 0;
@@ -510,6 +512,7 @@ export class ChatView extends ItemView {
 			return;
 		}
 
+		this.clearExclusionsForSelection(resolvedSelection);
 		this.composerSelections.push(resolvedSelection);
 		if (resolved.warning) {
 			new Notice(resolved.warning, 7000);
@@ -641,7 +644,9 @@ export class ChatView extends ItemView {
 			});
 			removeButtonEl.type = "button";
 			removeButtonEl.addEventListener("click", () => {
-				this.composerSelections = this.composerSelections.filter((item) => item.id !== selection.id);
+				const nextSelections = this.composerSelections.filter((item) => item.id !== selection.id);
+				this.excludeDeselectedSelection(selection, nextSelections);
+				this.composerSelections = nextSelections;
 				this.renderComposerSelections();
 			});
 		}
@@ -755,10 +760,10 @@ export class ChatView extends ItemView {
 		}
 		const explicitSelections = [...this.composerSelections];
 		const includeBm25Search = this.plugin.getSearchVaultEnabled();
+		const excludedSourceIds = [...this.excludedSourceIds];
+		const excludedPaths = [...this.excludedPaths];
 
 		this.inputEl.value = "";
-		this.composerSelections = [];
-		this.renderComposerSelections();
 		this.clearMentionPanel();
 		this.setBusy(true);
 
@@ -766,6 +771,8 @@ export class ChatView extends ItemView {
 			const runPromise = this.plugin.handleUserQuery(query, {
 				explicitSelections,
 				includeBm25Search,
+				excludedSourceIds,
+				excludedPaths,
 			});
 			this.renderMessages();
 			await runPromise;
@@ -785,7 +792,7 @@ export class ChatView extends ItemView {
 
 		await this.plugin.startNewConversation();
 		this.sourceListExpandedByMessageKey.clear();
-		this.composerSelections = [];
+		this.resetComposerState();
 		this.renderComposerSelections();
 		this.clearMentionPanel();
 		this.renderMessages();
@@ -804,7 +811,7 @@ export class ChatView extends ItemView {
 				try {
 					await this.plugin.loadConversation(conversationId);
 					this.sourceListExpandedByMessageKey.clear();
-					this.composerSelections = [];
+					this.resetComposerState();
 					this.renderComposerSelections();
 					this.clearMentionPanel();
 					this.renderMessages();
@@ -814,6 +821,60 @@ export class ChatView extends ItemView {
 			},
 		});
 		modal.open();
+	}
+
+	private resetComposerState(): void {
+		this.composerSelections = [];
+		this.excludedSourceIds.clear();
+		this.excludedPaths.clear();
+	}
+
+	private clearExclusionsForSelection(selection: ComposerSelectionItem): void {
+		for (const filePath of selection.filePaths) {
+			if (!filePath) {
+				continue;
+			}
+			this.excludedPaths.delete(filePath);
+		}
+
+		const sourceIds = this.plugin.getSourceIdsForPaths(selection.filePaths);
+		for (const sourceId of sourceIds) {
+			if (!sourceId) {
+				continue;
+			}
+			this.excludedSourceIds.delete(sourceId);
+		}
+	}
+
+	private excludeDeselectedSelection(
+		selection: ComposerSelectionItem,
+		remainingSelections: ComposerSelectionItem[],
+	): void {
+		const remainingPaths = new Set<string>();
+		for (const remainingSelection of remainingSelections) {
+			for (const filePath of remainingSelection.filePaths) {
+				if (filePath) {
+					remainingPaths.add(filePath);
+				}
+			}
+		}
+
+		const removedPaths: string[] = [];
+		for (const filePath of selection.filePaths) {
+			if (!filePath || remainingPaths.has(filePath)) {
+				continue;
+			}
+			this.excludedPaths.add(filePath);
+			removedPaths.push(filePath);
+		}
+
+		const removedSourceIds = this.plugin.getSourceIdsForPaths(removedPaths);
+		for (const sourceId of removedSourceIds) {
+			if (!sourceId) {
+				continue;
+			}
+			this.excludedSourceIds.add(sourceId);
+		}
 	}
 
 	private setBusy(isBusy: boolean): void {

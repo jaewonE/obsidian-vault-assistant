@@ -5,8 +5,9 @@ export function buildReusableSourceIds(params: {
 	resolveSourceId: (sourceId: string) => string;
 	remoteSourceIds: Set<string>;
 	maxCount: number;
+	excludedSourceIds?: Set<string>;
 }): string[] {
-	const { queryMetadata, resolveSourceId, remoteSourceIds, maxCount } = params;
+	const { queryMetadata, resolveSourceId, remoteSourceIds, maxCount, excludedSourceIds } = params;
 	const reusableSourceIds: string[] = [];
 	const seen = new Set<string>();
 
@@ -22,6 +23,9 @@ export function buildReusableSourceIds(params: {
 				continue;
 			}
 			if (!remoteSourceIds.has(sourceId)) {
+				continue;
+			}
+			if (excludedSourceIds?.has(sourceId)) {
 				continue;
 			}
 			seen.add(sourceId);

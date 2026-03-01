@@ -197,6 +197,25 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return items;
 	}
 
+	getSourceIdsForPaths(paths: string[]): string[] {
+		const sourceIds = new Set<string>();
+		for (const path of paths) {
+			if (!path) {
+				continue;
+			}
+			const entry = this.store.getSourceEntryByPath(path);
+			if (!entry?.sourceId) {
+				continue;
+			}
+			const resolvedSourceId = this.store.resolveSourceId(entry.sourceId);
+			if (!resolvedSourceId) {
+				continue;
+			}
+			sourceIds.add(resolvedSourceId);
+		}
+		return [...sourceIds];
+	}
+
 	searchAddFilePathCandidates(term: string, mode: AddFilePathMode): AddFilePathSearchItem[] {
 		return this.explicitSourceSelectionService.search(term, mode);
 	}
@@ -302,14 +321,23 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 	async handleUserQuery(
 		query: string,
-		options?: { explicitSelections?: ComposerSelectionItem[]; includeBm25Search?: boolean },
+		options?: {
+			explicitSelections?: ComposerSelectionItem[];
+			includeBm25Search?: boolean;
+			excludedSourceIds?: string[];
+			excludedPaths?: string[];
+		},
 	): Promise<void> {
 		const trimmedQuery = query.trim();
 		if (!trimmedQuery) {
 			return;
 		}
 		const explicitSelections = this.normalizeComposerSelections(options?.explicitSelections ?? []);
-		const explicitPaths = collectExplicitSelectionPaths(explicitSelections);
+		const excludedPathSet = this.normalizeExcludedPaths(options?.excludedPaths ?? []);
+		const explicitPaths = collectExplicitSelectionPaths(explicitSelections).filter(
+			(path) => !excludedPathSet.has(path),
+		);
+		const excludedSourceIdSet = this.normalizeExcludedSourceIds(options?.excludedSourceIds ?? []);
 		const includeBm25Search = this.shouldRunBm25ForQuery(options?.includeBm25Search);
 
 		const conversation = this.getActiveConversation();
@@ -382,13 +410,16 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					path: item.path,
 					score: item.score,
 				}));
-				queryMetadata.bm25Selection.selected = bm25Result.selected.map((item) => ({
-					path: item.path,
-					score: item.score,
-				}));
 			}
 
-			const bm25SelectedPaths = bm25Result ? bm25Result.selected.map((item) => item.path) : [];
+			const bm25SelectedItems = bm25Result
+				? bm25Result.selected.filter((item) => !excludedPathSet.has(item.path))
+				: [];
+			queryMetadata.bm25Selection.selected = bm25SelectedItems.map((item) => ({
+				path: item.path,
+				score: item.score,
+			}));
+			const bm25SelectedPaths = bm25SelectedItems.map((item) => item.path);
 			const selectedPaths = mergeSelectionPaths(bm25SelectedPaths, explicitPaths);
 			const allowedUploadPathsResult = filterAllowedUploadPaths(selectedPaths);
 			const selectedUploadPaths = allowedUploadPathsResult.allowedPaths;
@@ -401,7 +432,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			}
 			const selectedUploadPathSet = new Set(selectedUploadPaths);
 			const explicitUploadPaths = explicitPaths.filter((path) => selectedUploadPathSet.has(path));
-			const historicalSourceIds = this.getConversationReusableSourceIds(conversation);
+			const historicalSourceIds = this.getConversationReusableSourceIds(conversation, excludedSourceIdSet);
 			if (selectedUploadPaths.length === 0 && historicalSourceIds.length === 0) {
 				if (includeBm25Search && bm25Result) {
 					if (bm25Result.queryTokens.length === 0) {
@@ -494,21 +525,21 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			);
 
 			queryMetadata.bm25Selection.selected = bm25Result
-				? bm25Result.selected.map((item) => ({
+				? bm25SelectedItems.map((item) => ({
 						path: item.path,
 						score: item.score,
 						sourceId: pathToSourceId[item.path],
 					}))
 				: [];
 
-			const bm25SourceIds = bm25Result
-				? bm25Result.selected
-						.map((item) => pathToSourceId[item.path])
-						.filter((value): value is string => typeof value === "string" && value.length > 0)
-				: [];
+			const bm25SourceIds = bm25SelectedItems
+				.map((item) => pathToSourceId[item.path])
+				.filter((value): value is string => typeof value === "string" && value.length > 0)
+				.filter((sourceId) => !excludedSourceIdSet.has(this.store.resolveSourceId(sourceId)));
 			const explicitSourceIds = explicitUploadPaths
 				.map((path) => pathToSourceId[path])
-				.filter((value): value is string => typeof value === "string" && value.length > 0);
+				.filter((value): value is string => typeof value === "string" && value.length > 0)
+				.filter((sourceId) => !excludedSourceIdSet.has(this.store.resolveSourceId(sourceId)));
 			const currentSelectionSourceIds = [...new Set([...bm25SourceIds, ...explicitSourceIds])];
 
 			const sourceIdsSet = new Set(currentSelectionSourceIds);
@@ -1068,12 +1099,16 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return lowered.includes("conversation") && (lowered.includes("not found") || lowered.includes("invalid"));
 	}
 
-	private getConversationReusableSourceIds(conversation: ConversationRecord): string[] {
+	private getConversationReusableSourceIds(
+		conversation: ConversationRecord,
+		excludedSourceIds?: Set<string>,
+	): string[] {
 		return buildReusableSourceIds({
 			queryMetadata: conversation.queryMetadata,
 			resolveSourceId: (sourceId: string) => this.store.resolveSourceId(sourceId),
 			remoteSourceIds: this.remoteSourceIds,
 			maxCount: MAX_REUSABLE_HISTORY_SOURCE_IDS,
+			excludedSourceIds,
 		});
 	}
 
@@ -1117,6 +1152,32 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			});
 		}
 
+		return normalized;
+	}
+
+	private normalizeExcludedPaths(paths: string[]): Set<string> {
+		const normalized = new Set<string>();
+		for (const path of paths) {
+			if (typeof path !== "string" || path.length === 0) {
+				continue;
+			}
+			normalized.add(path);
+		}
+		return normalized;
+	}
+
+	private normalizeExcludedSourceIds(sourceIds: string[]): Set<string> {
+		const normalized = new Set<string>();
+		for (const sourceId of sourceIds) {
+			if (typeof sourceId !== "string" || sourceId.length === 0) {
+				continue;
+			}
+			const resolvedSourceId = this.store.resolveSourceId(sourceId);
+			if (!resolvedSourceId) {
+				continue;
+			}
+			normalized.add(resolvedSourceId);
+		}
 		return normalized;
 	}
 

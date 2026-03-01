@@ -2,6 +2,16 @@
 
 All notable repository changes are documented here.
 
+## [0.4.2] - 2026-03-01
+
+### Changed
+
+- Explicit `@` / `@@` source chips are no longer cleared on send, so the composer keeps showing the currently referenced manual sources across follow-up questions in the same tab.
+- Clicking `x` on a source chip now records a source exclusion and applies it to subsequent queries:
+  - deselected file/path descendants are excluded from path selection inputs
+  - resolved source IDs for deselected paths are excluded from final NotebookLM query `source_ids` merge (including conversation carry-over)
+- Query planning now supports exclusion-aware source reuse filtering, preventing deselected sources from being reintroduced via history carry-over.
+
 ## [0.4.1] - 2026-03-01
 
 ### Added

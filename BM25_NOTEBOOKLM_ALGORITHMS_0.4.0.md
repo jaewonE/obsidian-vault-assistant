@@ -1,19 +1,19 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.4.1)
+# BM25 + NotebookLM Algorithms and Implementation (v0.4.2)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.4.1` for:
+This document specifies the production algorithms used in `v0.4.2` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
 
-`v0.4.1` keeps BM25 scoring/indexing behavior unchanged and adds extension-aware source upload planning for explicit source selections.
+`v0.4.2` keeps BM25 scoring/indexing behavior unchanged and adds explicit-selection retention and deselection exclusion rules for query `source_ids`.
 
 ---
 
-## 2. Runtime architecture (v0.4.1)
+## 2. Runtime architecture (v0.4.2)
 
 Main components:
 
@@ -147,8 +147,11 @@ For each query:
 
 4. Prepare sources for `preparedPaths` via `ensureSourcesForPaths`.
 5. Build current source IDs from prepared BM25 + explicit paths.
-6. Merge with historical reusable source IDs (carry-over).
-7. Query NotebookLM with merged source IDs.
+6. Build exclusion sets from composer deselections:
+   - path exclusions
+   - resolved source ID exclusions
+7. Merge with historical reusable source IDs (carry-over) after applying exclusions.
+8. Query NotebookLM with merged source IDs.
 
 If BM25 selects zero documents but explicit paths exist, query still proceeds with explicit sources.
 
@@ -206,7 +209,8 @@ Implementation: `src/ui/ChatView.ts`, `styles.css`
 3. Selection creates composer chip above input.
 4. Path chips render `path (count)`.
 5. Each chip has `x` removal control.
-6. Send flow clears draft chips and passes resolved explicit selections to query execution.
+6. Explicit chips persist after send and remain visible above composer.
+7. Chip removal contributes deselected descendants to excluded paths and excluded source IDs for subsequent queries.
 
 ---
 
@@ -219,4 +223,5 @@ Added/updated tests:
 - `test/plugin/explicitSelectionMerge.test.ts`
 - `test/storage/PluginDataStore.test.ts` (explicit selection normalization)
 - `test/plugin/NotebookLMPlugin.sources.test.ts` (non-text extension uploads as `source_type=file`)
+- `test/plugin/historySourceIds.test.ts` (deselected source ID exclusion from carry-over)
 - existing source preparation + integration tests remain green.

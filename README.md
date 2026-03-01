@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.4.1`
+Version: `0.4.2`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -36,7 +36,9 @@ The plugin provides a right-sidebar chat workflow:
 - Selected source chips above composer:
   - file/path chips are clickable
   - path chips include descendant file count (for example `docs/topic (4)`)
+  - explicit `@` / `@@` chips remain visible across follow-up questions in the same tab
   - each chip removable via `x`
+  - removing a chip excludes that file/path source ID(s) from subsequent query `source_ids`
   - path chip click opens folder note only when `path/name/name.md|canvas|base` exists
 - Path guardrails:
   - warning when path expansion exceeds 15 files
@@ -116,7 +118,8 @@ npm test
 4. Run command: `Open NotebookLM chat`.
 5. Ask questions in the right sidebar chat view.
 6. Optionally add explicit sources via `@` / `@@` before sending.
-7. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
+7. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
+8. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
 ## Settings
 
