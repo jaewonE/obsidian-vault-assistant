@@ -324,6 +324,9 @@ export class ChatView extends ItemView {
 		if (!this.matchesEnter(event) || event.shiftKey || event.isComposing) {
 			return;
 		}
+		if (this.busy) {
+			return;
+		}
 
 		this.consumeKeyboardEvent(event);
 		void this.sendMessage();
@@ -352,7 +355,7 @@ export class ChatView extends ItemView {
 	}
 
 	private handleComposerInputChanged(): void {
-		if (!this.inputEl || this.busy) {
+		if (!this.inputEl) {
 			this.clearMentionPanel();
 			return;
 		}
@@ -540,7 +543,7 @@ export class ChatView extends ItemView {
 	}
 
 	private renderMentionPanel(): void {
-		if (!this.mentionPanelEl || !this.inputEl || this.busy) {
+		if (!this.mentionPanelEl || !this.inputEl) {
 			return;
 		}
 
@@ -660,7 +663,6 @@ export class ChatView extends ItemView {
 			attr: { type: "checkbox" },
 		});
 		toggleInputEl.checked = this.plugin.getSearchVaultEnabled();
-		toggleInputEl.disabled = this.busy;
 		toggleInputEl.addEventListener("change", () => {
 			void this.plugin.setSearchVaultEnabled(toggleInputEl.checked).catch((error) => {
 				new Notice(
@@ -879,13 +881,7 @@ export class ChatView extends ItemView {
 
 	private setBusy(isBusy: boolean): void {
 		this.busy = isBusy;
-		if (this.inputEl) {
-			this.inputEl.disabled = isBusy;
-		}
 		this.renderComposerSelections();
-		if (isBusy) {
-			this.clearMentionPanel();
-		}
 		this.sendButton?.setDisabled(isBusy);
 		this.newButton?.setDisabled(isBusy);
 		this.historyButton?.setDisabled(isBusy);

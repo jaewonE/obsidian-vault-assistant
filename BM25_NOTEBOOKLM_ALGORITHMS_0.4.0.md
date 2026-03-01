@@ -1,19 +1,19 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.4.2)
+# BM25 + NotebookLM Algorithms and Implementation (v0.4.3)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.4.2` for:
+This document specifies the production algorithms used in `v0.4.3` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
 
-`v0.4.2` keeps BM25 scoring/indexing behavior unchanged and adds explicit-selection retention and deselection exclusion rules for query `source_ids`.
+`v0.4.3` keeps BM25 scoring/indexing behavior unchanged and adds busy-state composer interaction continuity while preserving button-level execution guards.
 
 ---
 
-## 2. Runtime architecture (v0.4.2)
+## 2. Runtime architecture (v0.4.3)
 
 Main components:
 
@@ -211,6 +211,7 @@ Implementation: `src/ui/ChatView.ts`, `styles.css`
 5. Each chip has `x` removal control.
 6. Explicit chips persist after send and remain visible above composer.
 7. Chip removal contributes deselected descendants to excluded paths and excluded source IDs for subsequent queries.
+8. During in-flight query processing, composer remains interactive (input, mentions, chip controls, search toggle); only action buttons (`Send`, `New`, `History`) are disabled.
 
 ---
 

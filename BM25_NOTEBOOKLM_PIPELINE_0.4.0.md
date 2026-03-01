@@ -1,8 +1,8 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.2)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.3)
 
 ## 1. Scope
 
-This document defines the `v0.4.2` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
+This document defines the `v0.4.3` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
 
 ## 2. Pipeline stages
 
@@ -34,6 +34,8 @@ This document defines the `v0.4.2` end-to-end behavior with explicit file/path a
 | Path chip shows descendant count `(N)` | `src/ui/ChatView.ts` chip label formatting |
 | Each selected item removable via `x` | `src/ui/ChatView.ts` chip remove button |
 | Explicit chips remain visible after send in the same tab | `src/ui/ChatView.ts` (`sendMessage` no longer clears `composerSelections`) |
+| During in-flight query processing, composer input and selection controls remain interactive | `src/ui/ChatView.ts` (`setBusy`, `handleComposerInputChanged`, `renderMentionPanel`, search toggle rendering) |
+| Only `Send`, `New`, and `History` are disabled while busy | `src/ui/ChatView.ts` (`setBusy`) |
 | Deselecting chip excludes selected descendants from subsequent source selection scope | `src/ui/ChatView.ts` (`excludeDeselectedSelection`) + `NotebookLMPlugin.handleUserQuery` (`excludedPaths`) |
 | Deselecting chip excludes resolved source IDs from final query `source_ids` (including history carry-over) | `src/ui/ChatView.ts` (`excludedSourceIds`) + `src/plugin/historySourceIds.ts` + `NotebookLMPlugin.handleUserQuery` |
 | Clicking selected file opens note | `src/plugin/NotebookLMPlugin.ts` (`openComposerSelectionInNewTab`) |
@@ -83,7 +85,7 @@ Build/type checks:
 
 - `npm run build`
 
-## 7. Out of scope for v0.4.2
+## 7. Out of scope for v0.4.3
 
 - Slash command execution runtime (command action dispatch)
 - Multi-select from a single mention search session

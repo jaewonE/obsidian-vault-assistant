@@ -2,6 +2,17 @@
 
 All notable repository changes are documented here.
 
+## [0.4.3] - 2026-03-01
+
+### Changed
+
+- Busy-state UI locking in chat composer was relaxed during query execution:
+  - query textarea remains editable
+  - `@` / `@@` mention panel remains interactive
+  - selected source chips and `Search vault` toggle remain interactive
+- While processing, only `Send`, `New`, and `History` controls are disabled.
+- `Enter` key handling while busy no longer consumes input for a blocked send attempt, so normal textarea interaction is preserved.
+
 ## [0.4.2] - 2026-03-01
 
 ### Changed
