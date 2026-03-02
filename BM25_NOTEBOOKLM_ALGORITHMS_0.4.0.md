@@ -1,19 +1,20 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.4.4)
+# BM25 + NotebookLM Algorithms and Implementation (v0.5.0)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.4.4` for:
+This document specifies the production algorithms used in `v0.5.0` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
+5. Slash command and subcommand autocomplete in composer (`/source`, `/create`, `/setting`, `/source add`, `/source get`).
 
-`v0.4.4` keeps BM25 scoring/indexing behavior unchanged and adds immediate explicit-source pre-upload with query-stage progress synchronization plus composer-chip upload state indicators.
+`v0.5.0` keeps BM25 scoring/indexing behavior unchanged, preserves explicit-source pre-upload behavior from `v0.4.4`, and adds slash-command/subcommand autocomplete behavior in composer mention UX.
 
 ---
 
-## 2. Runtime architecture (v0.4.4)
+## 2. Runtime architecture (v0.5.0)
 
 Main components:
 
@@ -34,16 +35,17 @@ Main components:
   - `src/storage/PluginDataStore.ts`
 - UI:
   - `src/ui/ChatView.ts`
+  - `src/ui/slashCommands.ts`
 - MCP transport/retry:
   - `src/mcp/NotebookLMMcpClient.ts`
 
 ---
 
-## 3. Composer mention parsing algorithm (`@` / `@@`)
+## 3. Composer mention parsing algorithm (`@` / `@@` / `/`)
 
-Implementation: `src/ui/pathMention.ts`
+Implementation: `src/ui/pathMention.ts`, `src/ui/slashCommands.ts`, `src/ui/ChatView.ts`
 
-### 3.1 Active token detection
+### 3.1 Active explicit-source token detection (`@`, `@@`)
 
 Given textarea value and cursor position:
 
@@ -55,7 +57,7 @@ Given textarea value and cursor position:
    - `@@term` -> mode `all`
 5. Return token bounds (`tokenStart`, `tokenEnd`) and search `term`.
 
-### 3.2 Token replacement on selection
+### 3.2 Explicit-source token replacement on selection
 
 When user selects one search result:
 
@@ -64,6 +66,29 @@ When user selects one search result:
 3. Keep the remaining query text unchanged.
 
 This enforces one selected file/path per single mention token.
+
+### 3.3 Active slash-command token detection (`/`)
+
+Given textarea value and cursor position:
+
+1. Scan backward from cursor to whitespace boundary.
+2. Detect `/` token start only when prefix is start-of-line or whitespace.
+3. Keep token active while term contains spaces, so subcommand input remains in same token (for example `source ad`).
+4. Reject only on line-break boundaries.
+5. Return slash token bounds and term.
+
+### 3.4 Slash command candidate generation and completion
+
+1. For empty slash term, return root commands: `/source`, `/create`, `/setting`.
+2. For partial root term (for example `s`), return root commands with `startsWith` match.
+3. If root command is fully typed and followed by space (for example `source `), return supported subcommands for that root:
+   - `/source add`
+   - `/source get`
+4. Apply `startsWith` filtering on subcommand input (for example `source ad` -> `/source add`).
+5. If slash token has zero candidates, hide command suggestion panel for that token.
+6. On `Enter` while panel is visible, select hovered/keyboard-active candidate; if none active, select top candidate.
+7. Replace slash token with full selected command text and keep focus in composer.
+8. If panel is hidden (no candidates), `Enter` executes normal query submission.
 
 ---
 
@@ -221,6 +246,10 @@ Implementation: `src/ui/ChatView.ts`, `styles.css`
 13. Chip labels keep ellipsis overflow handling, and hovering a chip shows full source text via tooltip.
 14. Removing an uploading path chip interrupts that path’s queue: current in-flight file completes, remaining queued files for that path are skipped.
 15. If the same path is selected again, progress starts from already prepared files because status computation counts existing prepared source IDs.
+16. Typing `/` triggers command suggestion panel for root commands and, where applicable, subcommands.
+17. Slash command suggestions are filtered live and rendered with command-specific visual styling (accent pill + blur/glow).
+18. `Enter` on partial slash command/subcommand input autocompletes to selected (or first) candidate.
+19. If no slash candidate exists, command panel is hidden and `Enter` falls back to normal query submission.
 
 ---
 
@@ -229,6 +258,7 @@ Implementation: `src/ui/ChatView.ts`, `styles.css`
 Added/updated tests:
 
 - `test/ui/pathMention.test.ts`
+- `test/ui/slashCommands.test.ts`
 - `test/plugin/ExplicitSourceSelectionService.test.ts`
 - `test/plugin/explicitSelectionMerge.test.ts`
 - `test/storage/PluginDataStore.test.ts` (explicit selection normalization)

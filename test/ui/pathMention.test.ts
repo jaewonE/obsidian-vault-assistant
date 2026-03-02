@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getActiveAddFilePathMention, replaceMentionToken } from "../../src/ui/pathMention";
+import {
+	getActiveAddFilePathMention,
+	getActiveComposerMention,
+	getActiveSlashCommandMention,
+	replaceMentionToken,
+} from "../../src/ui/pathMention";
 
 test("detects markdown add-path mention token", () => {
 	const text = "Explain @algorithms/heap";
@@ -46,4 +51,41 @@ test("replaceMentionToken removes the active token from text", () => {
 	const replaced = replaceMentionToken(text, context, "");
 	assert.equal(replaced.value, "question  now");
 	assert.equal(replaced.cursorIndex, "question ".length);
+});
+
+test("detects slash command mention token", () => {
+	const text = "Use /so";
+	const context = getActiveSlashCommandMention(text, text.length);
+	assert.ok(context);
+	assert.equal(context?.kind, "command");
+	assert.equal(context?.trigger, "/");
+	assert.equal(context?.term, "so");
+});
+
+test("detects slash command mention with empty term", () => {
+	const text = "/";
+	const context = getActiveSlashCommandMention(text, text.length);
+	assert.ok(context);
+	assert.equal(context?.term, "");
+});
+
+test("does not parse slash inside a normal token", () => {
+	const text = "folder/source";
+	const context = getActiveSlashCommandMention(text, text.length);
+	assert.equal(context, null);
+});
+
+test("keeps slash mention active when typing a subcommand", () => {
+	const text = "/source ad";
+	const context = getActiveSlashCommandMention(text, text.length);
+	assert.ok(context);
+	assert.equal(context?.term, "source ad");
+});
+
+test("composer mention picks nearest active trigger", () => {
+	const text = "@docs/path /se";
+	const context = getActiveComposerMention(text, text.length);
+	assert.ok(context);
+	assert.equal(context?.kind, "command");
+	assert.equal(context?.term, "se");
 });

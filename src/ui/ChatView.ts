@@ -12,10 +12,14 @@ import type {
 import { HistoryModal } from "./HistoryModal";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "./constants";
 import {
-	type AddFilePathMentionContext,
-	getActiveAddFilePathMention,
+	type ComposerMentionContext,
+	getActiveComposerMention,
 	replaceMentionToken,
 } from "./pathMention";
+import {
+	searchSlashCommandSuggestions,
+	type SlashCommandSuggestion,
+} from "./slashCommands";
 
 const FILE_EXTENSION_ICON_BY_NAME: Record<string, string> = {
 	md: "file-text",
@@ -92,6 +96,8 @@ const CODE_EXTENSIONS = new Set([
 	"ps1",
 ]);
 
+type ComposerMentionCandidate = AddFilePathSearchItem | SlashCommandSuggestion;
+
 function getFileIconNameByExtension(extension?: string): string {
 	if (!extension) {
 		return "file";
@@ -111,7 +117,10 @@ function getFileIconNameByExtension(extension?: string): string {
 	return FILE_EXTENSION_ICON_BY_NAME[normalized] ?? "file";
 }
 
-function getSearchItemIconName(item: AddFilePathSearchItem): string {
+function getSearchItemIconName(item: ComposerMentionCandidate): string {
+	if (item.kind === "command") {
+		return "list";
+	}
 	if (item.kind === "path") {
 		return "folder";
 	}
@@ -145,7 +154,7 @@ export class ChatView extends ItemView {
 	private composerSelections: ComposerSelectionItem[] = [];
 	private excludedSourceIds = new Set<string>();
 	private excludedPaths = new Set<string>();
-	private mentionCandidates: AddFilePathSearchItem[] = [];
+	private mentionCandidates: ComposerMentionCandidate[] = [];
 	private mentionItemElements: HTMLButtonElement[] = [];
 	private mentionSelectionIndex = 0;
 	private mentionHoveredIndex: number | null = null;
@@ -374,7 +383,7 @@ export class ChatView extends ItemView {
 		}
 
 		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+		const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
 		if (!mentionContext) {
 			this.mentionSuppressedKey = null;
 			this.clearMentionPanel();
@@ -389,8 +398,12 @@ export class ChatView extends ItemView {
 		this.mentionSuppressedKey = null;
 
 		const currentSearchVersion = ++this.mentionSearchVersion;
-		const candidates = this.plugin.searchAddFilePathCandidates(mentionContext.term, mentionContext.mode);
+		const candidates = this.getMentionCandidates(mentionContext);
 		if (currentSearchVersion !== this.mentionSearchVersion) {
+			return;
+		}
+		if (mentionContext.kind === "command" && candidates.length === 0) {
+			this.clearMentionPanel();
 			return;
 		}
 		this.mentionCandidates = candidates;
@@ -399,6 +412,13 @@ export class ChatView extends ItemView {
 		}
 		this.mentionSelectionIndex = Math.min(this.mentionSelectionIndex, Math.max(0, candidates.length - 1));
 		this.renderMentionPanel();
+	}
+
+	private getMentionCandidates(context: ComposerMentionContext): ComposerMentionCandidate[] {
+		if (context.kind === "command") {
+			return searchSlashCommandSuggestions(context.term);
+		}
+		return this.plugin.searchAddFilePathCandidates(context.term, context.mode);
 	}
 
 	private navigateMentionItems(direction: number): void {
@@ -468,7 +488,7 @@ export class ChatView extends ItemView {
 	private dismissMentionPanel(): void {
 		if (this.inputEl) {
 			const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-			const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+			const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
 			this.mentionSuppressedKey = mentionContext
 				? this.getMentionSuppressionKey(mentionContext, this.inputEl.value)
 				: null;
@@ -477,7 +497,7 @@ export class ChatView extends ItemView {
 	}
 
 	private getMentionSuppressionKey(
-		context: AddFilePathMentionContext,
+		context: ComposerMentionContext,
 		text: string,
 	): string {
 		const tokenText = text.slice(context.tokenStart, context.tokenEnd);
@@ -495,8 +515,25 @@ export class ChatView extends ItemView {
 		}
 
 		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+		const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
 		if (!mentionContext) {
+			return;
+		}
+
+		if (mentionContext.kind === "command") {
+			if (candidate.kind !== "command") {
+				return;
+			}
+			const replaced = replaceMentionToken(this.inputEl.value, mentionContext, candidate.text);
+			this.inputEl.value = replaced.value;
+			this.inputEl.setSelectionRange(replaced.cursorIndex, replaced.cursorIndex);
+			this.mentionSuppressedKey = null;
+			this.clearMentionPanel();
+			this.inputEl.focus();
+			return;
+		}
+
+		if (candidate.kind === "command") {
 			return;
 		}
 
@@ -562,7 +599,7 @@ export class ChatView extends ItemView {
 		}
 
 		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const mentionContext = getActiveAddFilePathMention(this.inputEl.value, cursorIndex);
+		const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
 		this.mentionPanelEl.empty();
 		if (!mentionContext) {
 			this.mentionPanelEl.style.display = "none";
@@ -571,6 +608,12 @@ export class ChatView extends ItemView {
 
 		this.mentionPanelEl.style.display = "flex";
 		if (this.mentionCandidates.length === 0) {
+			if (mentionContext.kind === "command") {
+				this.mentionPanelEl.style.display = "none";
+				this.mentionItemElements = [];
+				this.mentionHoveredIndex = null;
+				return;
+			}
 			this.mentionItemElements = [];
 			this.mentionHoveredIndex = null;
 			this.mentionPanelEl.createDiv({
@@ -588,6 +631,9 @@ export class ChatView extends ItemView {
 				continue;
 			}
 			const itemButton = this.mentionPanelEl.createEl("button", { cls: "nlm-chat-mention-item" });
+			if (candidate.kind === "command") {
+				itemButton.addClass("nlm-chat-mention-item-command");
+			}
 			itemButton.type = "button";
 			itemButton.addEventListener("click", () => {
 				this.selectMentionCandidate(index);
@@ -605,11 +651,20 @@ export class ChatView extends ItemView {
 
 			const bodyEl = itemButton.createDiv({ cls: "nlm-chat-mention-body" });
 			const lineEl = bodyEl.createDiv({ cls: "nlm-chat-mention-line" });
-			const pathText =
-				candidate.kind === "file" ? getDisplayParentPath(candidate.parentPath) : candidate.path;
+			const titleText = candidate.kind === "command" ? candidate.text : candidate.name;
+			const pathText = candidate.kind === "command"
+				? candidate.subcommand
+					? `Subcommand of /${candidate.rootCommand}`
+					: "Command"
+				: candidate.kind === "file"
+					? getDisplayParentPath(candidate.parentPath)
+					: candidate.path;
+			const titleClass = candidate.kind === "command"
+				? "nlm-chat-mention-command-block"
+				: "nlm-chat-mention-title";
 			lineEl.createDiv({
-				cls: "nlm-chat-mention-title",
-				text: candidate.name,
+				cls: titleClass,
+				text: titleText,
 			});
 			lineEl.createDiv({
 				cls: "nlm-chat-mention-path",

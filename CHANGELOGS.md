@@ -2,6 +2,26 @@
 
 All notable repository changes are documented here.
 
+## [0.5.0] - 2026-03-02
+
+### Added
+
+- Added slash command autocomplete in composer mention UI:
+  - typing `/` shows root commands (`/source`, `/create`, `/setting`)
+  - typing a completed root command with space shows subcommands (currently `/source add`, `/source get`)
+  - root and subcommand suggestions are filtered live by typed text
+- Added command suggestion styling in mention list:
+  - command rows now render a distinct command-block label with accent background and blur/glow edge treatment
+  - command text is displayed slightly smaller and bolder for clear visual distinction
+- Added slash-command search unit tests (`test/ui/slashCommands.test.ts`) and parser coverage updates (`test/ui/pathMention.test.ts`).
+
+### Changed
+
+- Composer mention parser now keeps `/...` command context active while typing subcommand text (spaces allowed inside slash-command term).
+- `Enter` behavior in composer mention panel was refined:
+  - if a slash command suggestion exists, `Enter` autocompletes to the selected item (or top item when none is explicitly selected)
+  - if no slash command suggestion matches current input (for example `/source edit`), mention panel is hidden and `Enter` falls back to normal query submission.
+
 ## [0.4.4] - 2026-03-01
 
 ### Changed

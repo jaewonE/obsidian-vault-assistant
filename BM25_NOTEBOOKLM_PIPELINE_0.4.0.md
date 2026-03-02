@@ -1,23 +1,24 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.4.4)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.5.0)
 
 ## 1. Scope
 
-This document defines the `v0.4.4` end-to-end behavior with explicit file/path additions (`@`, `@@`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
+This document defines the `v0.5.0` end-to-end behavior with explicit file/path additions (`@`, `@@`) and slash command autocomplete (`/`) integrated into the existing BM25 -> source preparation -> NotebookLM query pipeline.
 
 ## 2. Pipeline stages
 
 1. User enters query text in chat composer.
-2. Optional explicit selections are added via `@`/`@@` and remain visible as chips.
-3. Explicit selections are queued for immediate sequential background source upload.
-4. Uploading chips show circular loading UI in place of `x`; completed chips show `x`.
-5. Hovering an uploading chip switches the loading UI to `x` so the source can still be removed.
-6. Optional chip deselection (`x`) records excluded paths/source IDs.
-7. BM25 runs on markdown notes.
-8. BM25 paths and explicit paths are merged/deduplicated with deselected paths removed.
-9. Explicit paths reuse/wait for in-flight background upload state; BM25-only paths are uploaded in query stage.
-10. Current query source IDs are merged with bounded history source IDs after excluded source IDs are removed.
-11. NotebookLM query executes with merged `source_ids`.
-12. Conversation/query metadata is persisted.
+2. Optional slash command suggestions are shown via `/` (root + subcommand filtering and completion).
+3. Optional explicit selections are added via `@`/`@@` and remain visible as chips.
+4. Explicit selections are queued for immediate sequential background source upload.
+5. Uploading chips show circular loading UI in place of `x`; completed chips show `x`.
+6. Hovering an uploading chip switches the loading UI to `x` so the source can still be removed.
+7. Optional chip deselection (`x`) records excluded paths/source IDs.
+8. BM25 runs on markdown notes.
+9. BM25 paths and explicit paths are merged/deduplicated with deselected paths removed.
+10. Explicit paths reuse/wait for in-flight background upload state; BM25-only paths are uploaded in query stage.
+11. Current query source IDs are merged with bounded history source IDs after excluded source IDs are removed.
+12. NotebookLM query executes with merged `source_ids`.
+13. Conversation/query metadata is persisted.
 
 ## 3. Requirement-to-implementation mapping
 
@@ -25,9 +26,16 @@ This document defines the `v0.4.4` end-to-end behavior with explicit file/path a
 | --- | --- |
 | Typing `@` triggers Add File/Path search for markdown files only | `src/ui/pathMention.ts` (`mode=markdown`) + `src/plugin/ExplicitSourceSelectionService.ts` (`vault.getMarkdownFiles`) |
 | Typing `@@` triggers Add File/Path search for all files | `src/ui/pathMention.ts` (`mode=all`) + `src/plugin/ExplicitSourceSelectionService.ts` (`vault.getFiles`) |
+| Typing `/` triggers slash command suggestion search | `src/ui/pathMention.ts` (`getActiveSlashCommandMention`) + `src/ui/slashCommands.ts` |
+| Slash root commands are filtered by typed prefix (for example `/s` -> `/source`, `/setting`) | `src/ui/slashCommands.ts` (`startsWith` filtering) |
+| Slash subcommands are shown after completed root command + space (for example `/source `) | `src/ui/slashCommands.ts` (root/subcommand parsing) |
+| Slash subcommand list is filtered by typed subcommand text (for example `/source ad` -> `/source add`) | `src/ui/slashCommands.ts` |
+| If slash input has no matching command/subcommand, suggestion panel is hidden | `src/ui/ChatView.ts` (`handleComposerInputChanged`, `renderMentionPanel`) |
+| `Enter` autocompletes slash command/subcommand when suggestions are visible, and falls back to send when no suggestion exists | `src/ui/ChatView.ts` (`handleComposerKeydown`, `selectMentionCandidate`) |
 | Live search updates as user input changes | `src/ui/ChatView.ts` (`handleComposerInputChanged`) |
 | Empty search state message when no match | `src/ui/ChatView.ts` (`No more files found.` row) |
 | Search list shows icon, filename (with extension), muted path with overflow handling | `src/ui/ChatView.ts` + `styles.css` mention item styles |
+| Slash command rows are visually distinguished with command-style accent block | `src/ui/ChatView.ts` (`nlm-chat-mention-command-block`) + `styles.css` |
 | Path result uses folder icon + path | `src/ui/ChatView.ts` (`kind=path`) |
 | Only one file/path can be selected per search token | `src/ui/pathMention.ts` token replacement + single candidate selection in `ChatView` |
 | Path selection includes all descendant files | `src/plugin/ExplicitSourceSelectionService.ts` (`getDescendantPaths`) |
@@ -85,6 +93,7 @@ Normalization and backward compatibility:
 Automated:
 
 - `test/ui/pathMention.test.ts`
+- `test/ui/slashCommands.test.ts`
 - `test/plugin/ExplicitSourceSelectionService.test.ts`
 - `test/plugin/explicitSelectionMerge.test.ts`
 - `test/plugin/historySourceIds.test.ts` (excluded source IDs removed from carry-over)
@@ -96,7 +105,7 @@ Build/type checks:
 
 - `npm run build`
 
-## 7. Out of scope for v0.4.4
+## 7. Out of scope for v0.5.0
 
 - Slash command execution runtime (command action dispatch)
 - Multi-select from a single mention search session

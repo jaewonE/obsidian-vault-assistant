@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.4.4`
+Version: `0.5.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -29,6 +29,14 @@ The plugin provides a right-sidebar chat workflow:
   - keyboard and mouse selection support (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`)
   - supports search terms with spaces and underscore-to-space matching
   - selected files/paths start sequential source upload immediately after selection
+- Slash command autocomplete in composer:
+  - type `/` to show available root commands (`/source`, `/create`, `/setting`)
+  - root command list is filtered by typed text (for example `/s`)
+  - subcommands are suggested after a completed root command (for example `/source ` -> `/source add`, `/source get`)
+  - subcommand list is filtered while typing (for example `/source ad` -> `/source add`)
+  - pressing `Enter` with an active suggestion autocompletes to the selected command text instead of sending
+  - when no command matches (for example `/source edit`), the suggestion panel is hidden and `Enter` performs normal query send
+  - slash command rows are rendered with a distinct command-style background pill in the suggestion list
 - Extension-aware source upload:
   - `.md` and `.txt` are uploaded as `source_type=text`
   - allowed non-text/media extensions are uploaded as `source_type=file`
@@ -127,8 +135,9 @@ npm test
 4. Run command: `Open NotebookLM chat`.
 5. Ask questions in the right sidebar chat view.
 6. Optionally add explicit sources via `@` / `@@` before sending.
-7. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
-8. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
+7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, and `/source` subcommands).
+8. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
+9. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
 ## Settings
 

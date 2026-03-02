@@ -1,11 +1,27 @@
 import type { AddFilePathMode } from "../types";
 
 export interface AddFilePathMentionContext {
+	kind: "add-file-path";
 	mode: AddFilePathMode;
 	term: string;
 	tokenStart: number;
 	tokenEnd: number;
 	trigger: "@" | "@@";
+}
+
+export interface SlashCommandMentionContext {
+	kind: "command";
+	term: string;
+	tokenStart: number;
+	tokenEnd: number;
+	trigger: "/";
+}
+
+export type ComposerMentionContext = AddFilePathMentionContext | SlashCommandMentionContext;
+
+interface MentionTokenRange {
+	tokenStart: number;
+	tokenEnd: number;
 }
 
 function isWhitespace(value: string): boolean {
@@ -57,6 +73,7 @@ export function getActiveAddFilePathMention(
 	}
 
 	return {
+		kind: "add-file-path",
 		mode: trigger === "@@" ? "all" : "markdown",
 		term,
 		tokenStart,
@@ -65,9 +82,71 @@ export function getActiveAddFilePathMention(
 	};
 }
 
+export function getActiveSlashCommandMention(
+	text: string,
+	cursorIndex: number,
+): SlashCommandMentionContext | null {
+	const safeCursor = Math.max(0, Math.min(cursorIndex, text.length));
+	const lineStart = text.lastIndexOf("\n", Math.max(0, safeCursor - 1)) + 1;
+
+	let tokenStart = -1;
+	for (let index = safeCursor - 1; index >= lineStart; index -= 1) {
+		if (text[index] !== "/") {
+			continue;
+		}
+
+		const prefix = index > 0 ? text[index - 1] : "";
+		if (prefix && !isWhitespace(prefix)) {
+			continue;
+		}
+
+		tokenStart = index;
+		break;
+	}
+
+	if (tokenStart < 0) {
+		return null;
+	}
+
+	const tokenBodyStart = tokenStart + 1;
+	if (tokenBodyStart > safeCursor) {
+		return null;
+	}
+
+	const term = text.slice(tokenBodyStart, safeCursor);
+	if (term.includes("\n") || term.includes("\r")) {
+		return null;
+	}
+
+	return {
+		kind: "command",
+		term,
+		tokenStart,
+		tokenEnd: safeCursor,
+		trigger: "/",
+	};
+}
+
+export function getActiveComposerMention(
+	text: string,
+	cursorIndex: number,
+): ComposerMentionContext | null {
+	const addFilePathMention = getActiveAddFilePathMention(text, cursorIndex);
+	const commandMention = getActiveSlashCommandMention(text, cursorIndex);
+	if (!addFilePathMention) {
+		return commandMention;
+	}
+	if (!commandMention) {
+		return addFilePathMention;
+	}
+	return commandMention.tokenStart > addFilePathMention.tokenStart
+		? commandMention
+		: addFilePathMention;
+}
+
 export function replaceMentionToken(
 	text: string,
-	context: AddFilePathMentionContext,
+	context: MentionTokenRange,
 	replacement = "",
 ): { value: string; cursorIndex: number } {
 	const nextValue =
