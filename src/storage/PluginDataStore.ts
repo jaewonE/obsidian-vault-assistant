@@ -6,6 +6,9 @@ import {
 	ConversationRecord,
 	DEFAULT_PLUGIN_DATA,
 	DEFAULT_SETTINGS,
+	NotebookResearchRecord,
+	NotebookResearchSourceItem,
+	NotebookResearchStatus,
 	NotebookLMPluginData,
 	NotebookLMPluginSettings,
 	QuerySourceSummary,
@@ -31,6 +34,7 @@ const MAX_CONVERSATION_HISTORY = 200;
 const MAX_QUERY_METADATA_PER_CONVERSATION = 200;
 const MAX_MESSAGES_PER_CONVERSATION = 400;
 const MAX_SOURCE_ALIAS_COUNT = 5000;
+const MAX_RESEARCH_RECORDS = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -82,6 +86,8 @@ function cloneDefaults(): NotebookLMPluginData {
 		},
 		bm25Index: null,
 		conversationHistory: [],
+		researchRecords: [],
+		researchSourceIndex: {},
 	};
 }
 
@@ -318,6 +324,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 	if (sourceSummaryRaw) {
 		const bm25SelectedCount = getNumber(sourceSummaryRaw.bm25SelectedCount);
 		const explicitSelectedCount = getNumber(sourceSummaryRaw.explicitSelectedCount);
+		const manualExternalSelectedCount = getNumber(sourceSummaryRaw.manualExternalSelectedCount);
 		const newlyPreparedCount = getNumber(sourceSummaryRaw.newlyPreparedCount);
 		const reusedFromSelectionCount = getNumber(sourceSummaryRaw.reusedFromSelectionCount);
 		const carriedFromHistoryCount = getNumber(sourceSummaryRaw.carriedFromHistoryCount);
@@ -332,6 +339,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 			sourceSummary = {
 				bm25SelectedCount,
 				explicitSelectedCount,
+				manualExternalSelectedCount,
 				newlyPreparedCount,
 				reusedFromSelectionCount,
 				carriedFromHistoryCount,
@@ -373,6 +381,84 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 			? value.errors.filter((item): item is string => typeof item === "string")
 			: undefined,
 		sourceSummary,
+	};
+}
+
+function normalizeResearchStatus(value: unknown): NotebookResearchStatus {
+	const status = getString(value)?.toLocaleLowerCase();
+	if (status === "ready") {
+		return "ready";
+	}
+	if (status === "no_research") {
+		return "no_research";
+	}
+	if (status === "error") {
+		return "error";
+	}
+	return "loading";
+}
+
+function normalizeResearchSourceItem(value: unknown): NotebookResearchSourceItem | null {
+	if (!isRecord(value)) {
+		return null;
+	}
+
+	const sourceId = getString(value.sourceId);
+	const title = getString(value.title);
+	if (!sourceId || !title) {
+		return null;
+	}
+
+	return {
+		sourceId,
+		title,
+		url: getString(value.url),
+		sourceType: getString(value.sourceType),
+	};
+}
+
+function normalizeResearchRecord(value: unknown): NotebookResearchRecord | null {
+	if (!isRecord(value)) {
+		return null;
+	}
+
+	const id = getString(value.id);
+	const kind = getString(value.kind);
+	const query = getString(value.query);
+	const notebookIdRaw = getString(value.notebookId);
+	const createdAt = getString(value.createdAt);
+	const updatedAt = getString(value.updatedAt);
+	if (
+		!id ||
+		!kind ||
+		(kind !== "link" && kind !== "links" && kind !== "research-fast" && kind !== "research-deep") ||
+		!query ||
+		!createdAt ||
+		!updatedAt
+	) {
+		return null;
+	}
+
+	const sourceItemsRaw = Array.isArray(value.sourceItems) ? value.sourceItems : [];
+	const sourceItems = sourceItemsRaw
+		.map((item) => normalizeResearchSourceItem(item))
+		.filter((item): item is NotebookResearchSourceItem => item !== null);
+	const linksRaw = Array.isArray(value.links) ? value.links : [];
+
+	return {
+		id,
+		kind,
+		status: normalizeResearchStatus(value.status),
+		query,
+		links: linksRaw.filter((item): item is string => typeof item === "string"),
+		sourceItems,
+		report: getString(value.report),
+		error: getString(value.error),
+		notebookId: notebookIdRaw ?? null,
+		startTaskId: getString(value.startTaskId),
+		taskId: getString(value.taskId),
+		createdAt,
+		updatedAt,
 	};
 }
 
@@ -505,12 +591,23 @@ export class PluginDataStore {
 			loaded.sourceRegistry.protected.push(path);
 		}
 
-		const historyRaw = Array.isArray(raw.conversationHistory) ? raw.conversationHistory : [];
-		loaded.conversationHistory = historyRaw
-			.map((entry) => normalizeConversationRecord(entry))
-			.filter((entry): entry is ConversationRecord => entry !== null)
-			.map((entry) => ({ ...entry }));
-		loaded.bm25Index = normalizeBM25CachedIndex(raw.bm25Index);
+			const historyRaw = Array.isArray(raw.conversationHistory) ? raw.conversationHistory : [];
+			loaded.conversationHistory = historyRaw
+				.map((entry) => normalizeConversationRecord(entry))
+				.filter((entry): entry is ConversationRecord => entry !== null)
+				.map((entry) => ({ ...entry }));
+			const researchRecordsRaw = Array.isArray(raw.researchRecords) ? raw.researchRecords : [];
+			loaded.researchRecords = researchRecordsRaw
+				.map((entry) => normalizeResearchRecord(entry))
+				.filter((entry): entry is NotebookResearchRecord => entry !== null)
+				.map((entry) => ({ ...entry, sourceItems: [...entry.sourceItems], links: [...entry.links] }));
+			loaded.researchSourceIndex = {};
+			for (const record of loaded.researchRecords) {
+				for (const sourceItem of record.sourceItems) {
+					loaded.researchSourceIndex[sourceItem.sourceId] = record.id;
+				}
+			}
+			loaded.bm25Index = normalizeBM25CachedIndex(raw.bm25Index);
 
 			this.data = loaded;
 			this.cleanupQueues();
@@ -573,6 +670,75 @@ export class PluginDataStore {
 		}
 
 		this.data.conversationHistory.push(conversation);
+	}
+
+	getResearchRecords(): NotebookResearchRecord[] {
+		return this.data.researchRecords.map((record) => ({
+			...record,
+			sourceItems: record.sourceItems.map((item) => ({ ...item })),
+			links: [...record.links],
+		}));
+	}
+
+	getResearchRecordById(recordId: string): NotebookResearchRecord | null {
+		const record = this.data.researchRecords.find((item) => item.id === recordId);
+		if (!record) {
+			return null;
+		}
+		return {
+			...record,
+			sourceItems: record.sourceItems.map((item) => ({ ...item })),
+			links: [...record.links],
+		};
+	}
+
+	getResearchRecordBySourceId(sourceId: string): NotebookResearchRecord | null {
+		if (!sourceId) {
+			return null;
+		}
+		const resolvedSourceId = this.resolveSourceId(sourceId);
+		const recordId = this.data.researchSourceIndex[sourceId] ?? this.data.researchSourceIndex[resolvedSourceId];
+		if (!recordId) {
+			return null;
+		}
+		return this.getResearchRecordById(recordId);
+	}
+
+	upsertResearchRecord(record: NotebookResearchRecord): void {
+		const normalized = normalizeResearchRecord(record);
+		if (!normalized) {
+			return;
+		}
+
+		const index = this.data.researchRecords.findIndex((item) => item.id === normalized.id);
+		if (index >= 0) {
+			this.data.researchRecords[index] = normalized;
+		} else {
+			this.data.researchRecords.push(normalized);
+		}
+		this.rebuildResearchSourceIndex();
+	}
+
+	reconcileResearchRecords(remoteSourceIds: Set<string>): void {
+		let changed = false;
+		for (const record of this.data.researchRecords) {
+			if (record.status !== "ready") {
+				continue;
+			}
+			const hasAnyRemoteSource = record.sourceItems.some((item) => {
+				const resolvedSourceId = this.resolveSourceId(item.sourceId);
+				return remoteSourceIds.has(resolvedSourceId);
+			});
+			if (!hasAnyRemoteSource && record.sourceItems.length > 0) {
+				record.status = "error";
+				record.error = "Research sources are no longer available in NotebookLM.";
+				record.updatedAt = new Date().toISOString();
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.rebuildResearchSourceIndex();
+		}
 	}
 
 	getSourceEntryByPath(path: string): SourceRegistryEntry | null {
@@ -847,12 +1013,19 @@ export class PluginDataStore {
 		}
 
 		this.data.sourceRegistry.probation = uniqProbation;
-			this.data.sourceRegistry.protected = uniqProtected;
-		}
+		this.data.sourceRegistry.protected = uniqProtected;
+	}
 
 	private compactData(): void {
 		this.pruneConversationHistory();
+		this.pruneResearchRecords();
 		this.pruneUnreachableAliases();
+		this.rebuildResearchSourceIndex();
+	}
+
+	private pruneResearchRecords(): void {
+		const sorted = [...this.data.researchRecords].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		this.data.researchRecords = sorted.slice(0, MAX_RESEARCH_RECORDS);
 	}
 
 	private pruneConversationHistory(): void {
@@ -889,6 +1062,13 @@ export class PluginDataStore {
 					if (scoredPath.sourceId) {
 						historicalSourceIds.add(scoredPath.sourceId);
 					}
+				}
+			}
+		}
+		for (const record of this.data.researchRecords) {
+			for (const sourceItem of record.sourceItems) {
+				if (sourceItem.sourceId) {
+					historicalSourceIds.add(sourceItem.sourceId);
 				}
 			}
 		}
@@ -945,5 +1125,18 @@ export class PluginDataStore {
 			return;
 		}
 		this.data.sourceRegistry.protected = updated;
+	}
+
+	private rebuildResearchSourceIndex(): void {
+		const nextIndex: Record<string, string> = {};
+		for (const record of this.data.researchRecords) {
+			for (const sourceItem of record.sourceItems) {
+				if (!sourceItem.sourceId) {
+					continue;
+				}
+				nextIndex[sourceItem.sourceId] = record.id;
+			}
+		}
+		this.data.researchSourceIndex = nextIndex;
 	}
 }

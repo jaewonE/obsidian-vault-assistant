@@ -2,6 +2,60 @@
 
 All notable repository changes are documented here.
 
+## [0.6.0] - 2026-03-03
+
+### Added
+
+- Added executable `/research` slash command workflow (composer command execution, not chat history messages):
+  - `/research <url>` (single link upload)
+  - `/research links <url ...>` (sequential multi-link upload)
+  - `/research <query>` (fast research)
+  - `/research deep <query>` (deep research)
+- Added deep research tracking with mutable `task_id` handling (`task_id` + `query` polling fallback) and fast/deep polling schedules:
+  - fast: first poll at `t+1s`, then `5s`
+  - deep: first poll at `t+2s`, then `20s -> 10s -> 5s` with transient-error backoff
+- Added research import selection policy:
+  - fast: import all returned indices
+  - deep: import only `result_type_name=web` entries with non-empty URLs
+- Added research metadata persistence (`researchRecords`, `researchSourceIndex`) for NotebookLM-only source lifecycle:
+  - stores source IDs, titles, URLs, query/report/task metadata
+  - does not store raw source content locally
+- Added dedicated composer chip UX for non-local research sources:
+  - 5 icon variants (link-url, link-youtube, links, research fast, research deep)
+  - loading spinner states with `%` center for multi-link uploads
+  - non-cancel remove behavior while loading (remove from UI/query scope only)
+  - light-red error state for `no_research` / `error`
+- Added research source click behaviors (composer + assistant source list):
+  - link: open URL directly
+  - links / fast: modal URL picker (title + muted URL)
+  - deep: modal deep-report markdown render via `MarkdownRenderer.render`
+- Added unit test coverage for:
+  - research command parsing
+  - deep task-id mutation tracker behavior
+  - research import index selection rules
+  - research record persistence and reconciliation
+
+### Changed
+
+- Query execution now accepts manual non-file source IDs (from active research chips) and merges them with BM25/explicit/history source IDs.
+- `sourceSummary` now optionally tracks `manualExternalSelectedCount`.
+- Slash command autocomplete now includes `/research` root with `links` and `deep` subcommands.
+- Link source add now always uses MCP `source_add` with `source_type=url` for both web and YouTube links (removed youtube-first fallback branch).
+- Fast/deep research runs now attach a unique run token to the query (`[run-...]`) and use that same stable query in all status polls while tracking mutable `task_id`.
+- Removed automatic `force=true` retry on `research_start`; runs now follow guide-aligned tracking/import flow without force-start side effects.
+- Extended post-import source validation policy to `link` and `links` flows as well:
+  - validates with `source_get_content` after `10s -> 20s -> 30s`
+  - automatically deletes unusable NotebookLM sources (`content` empty + `char_count<=0`)
+  - keeps failed links visible/openable in modal but excludes them from query source scope
+
+### Fixed
+
+- Fixed modal UI for research links/fast picker:
+  - increased vertical spacing for item/list top-bottom readability
+  - ensured failed links show light-red background (not border-only)
+  - truncated long title/url with ellipsis instead of wrapping
+  - replaced failed item title text with explicit failure status message to avoid duplicate URL display
+
 ## [0.5.0] - 2026-03-02
 
 ### Added

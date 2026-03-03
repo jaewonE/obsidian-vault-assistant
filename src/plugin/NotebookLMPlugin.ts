@@ -24,9 +24,16 @@ import {
 	ConversationRecord,
 	DEFAULT_SETTINGS,
 	ExplicitSelectionMetadata,
+	NotebookResearchRecord,
+	NotebookResearchSourceItem,
+	NotebookResearchStatus,
 	NotebookLMPluginSettings,
 	QueryProgressState,
 	QuerySourceItem,
+	ResearchCommandKind,
+	ResearchCommandParseResult,
+	ResearchLinkKind,
+	ResearchOperationView,
 	ResolveComposerSelectionResult,
 	SOURCE_TARGET_CAPACITY,
 	SourceEvictionRecord,
@@ -34,6 +41,8 @@ import {
 import { ChatView } from "../ui/ChatView";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "../ui/constants";
 import { NotebookLMSettingTab } from "../ui/SettingsTab";
+import { buildResearchTrackingQuery } from "./researchQuery";
+import { getResearchImportIndices, trackResearchStatus } from "./researchTracking";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -44,6 +53,25 @@ function getErrorMessage(error: unknown): string {
 		return error.message;
 	}
 	return String(error);
+}
+
+function parseHttpUrl(value: string | undefined): string | null {
+	if (typeof value !== "string") {
+		return null;
+	}
+	const trimmed = value.trim();
+	if (!/^https?:\/\//iu.test(trimmed) || /\s/u.test(trimmed)) {
+		return null;
+	}
+	try {
+		const parsed = new URL(trimmed);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+			return null;
+		}
+		return trimmed;
+	} catch {
+		return null;
+	}
 }
 
 function summarizeTokens(tokens: string[], max = 5): string {
@@ -66,6 +94,7 @@ type NumericSettingKey =
 const NOTEBOOK_TITLE = "Obsidian Vault Notebook";
 const PROTECTED_CAPACITY_RATIO = 0.7;
 const MAX_REUSABLE_HISTORY_SOURCE_IDS = 40;
+const IMPORTED_SOURCE_VALIDATION_DELAYS_MS = [10_000, 20_000, 30_000] as const;
 
 const SETTINGS_LIMITS = {
 	topN: { min: 1, max: 200 },
@@ -96,6 +125,32 @@ interface ExplicitUploadScopeState {
 	reusedPaths: Set<string>;
 }
 
+interface ResearchOperationState {
+	id: string;
+	recordId: string;
+	kind: ResearchCommandKind;
+	status: NotebookResearchStatus;
+	dismissed: boolean;
+	query: string;
+	links: string[];
+	sourceItems: NotebookResearchSourceItem[];
+	report?: string;
+	error?: string;
+	linkKind?: ResearchLinkKind;
+	progress: {
+		total: number;
+		completed: number;
+		percent: number;
+	};
+	notebookId: string | null;
+	startTaskId?: string;
+	taskId?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+type ExecutableResearchCommand = Exclude<ResearchCommandParseResult, { kind: "none" | "invalid" }>;
+
 export default class NotebookLMObsidianPlugin extends Plugin {
 	private store!: PluginDataStore;
 	private logger!: Logger;
@@ -112,6 +167,9 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private explicitUploadCurrentPath: string | null = null;
 	private explicitUploadWorkerPromise: Promise<void> | null = null;
 	private explicitUploadUpdateWaiters = new Set<() => void>();
+	private researchOperations = new Map<string, ResearchOperationState>();
+	private researchOperationListeners = new Set<() => void>();
+	private researchSourceFetchabilityCache = new Map<string, boolean>();
 	private sourcePreparationMutex: Promise<void> = Promise.resolve();
 
 	get settings(): NotebookLMPluginSettings {
@@ -147,6 +205,14 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		listener();
 		return () => {
 			this.explicitUploadStateListeners.delete(listener);
+		};
+	}
+
+	onResearchOperationChange(listener: () => void): () => void {
+		this.researchOperationListeners.add(listener);
+		listener();
+		return () => {
+			this.researchOperationListeners.delete(listener);
 		};
 	}
 
@@ -208,6 +274,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 	getSourceItemsForIds(sourceIds: string[]): QuerySourceItem[] {
 		const seen = new Set<string>();
+		const seenResearchRecords = new Set<string>();
 		const items: QuerySourceItem[] = [];
 		for (const rawSourceId of sourceIds) {
 			const sourceId = this.store.resolveSourceId(rawSourceId);
@@ -215,6 +282,22 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				continue;
 			}
 			seen.add(sourceId);
+
+			const researchRecord = this.store.getResearchRecordBySourceId(sourceId);
+			if (researchRecord) {
+				if (seenResearchRecords.has(researchRecord.id)) {
+					continue;
+				}
+				seenResearchRecords.add(researchRecord.id);
+				items.push({
+					sourceId,
+					path: researchRecord.query,
+					title: this.getResearchRecordDisplayTitle(researchRecord),
+					kind: researchRecord.kind,
+					researchRecordId: researchRecord.id,
+				});
+				continue;
+			}
 
 			const path = this.store.getSourcePathById(sourceId);
 			if (!path) {
@@ -225,6 +308,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				sourceId,
 				path,
 				title: this.getFileTitleFromPath(path),
+				kind: "local",
 			});
 		}
 
@@ -248,6 +332,185 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			sourceIds.add(resolvedSourceId);
 		}
 		return [...sourceIds];
+	}
+
+	getResearchOperations(): ResearchOperationView[] {
+		const operations = [...this.researchOperations.values()]
+			.sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+			.map((operation) => ({
+				id: operation.id,
+				recordId: operation.recordId,
+				kind: operation.kind,
+				status: operation.status,
+				dismissed: operation.dismissed,
+				query: operation.query,
+				links: [...operation.links],
+				sourceItems: operation.sourceItems.map((item) => ({ ...item })),
+				report: operation.report,
+				error: operation.error,
+				linkKind: operation.linkKind,
+				progress: { ...operation.progress },
+				createdAt: operation.createdAt,
+				updatedAt: operation.updatedAt,
+			}));
+		return operations;
+	}
+
+	getResearchRecordById(recordId: string): NotebookResearchRecord | null {
+		return this.store.getResearchRecordById(recordId);
+	}
+
+	async getResearchSourceFetchability(sourceIds: string[]): Promise<Record<string, boolean>> {
+		const result: Record<string, boolean> = {};
+		const dedupedInputSourceIds = [...new Set(sourceIds)]
+			.filter((sourceId): sourceId is string => typeof sourceId === "string" && sourceId.length > 0);
+		if (dedupedInputSourceIds.length === 0) {
+			return result;
+		}
+
+		const groupedByResolvedId = new Map<string, string[]>();
+		for (const inputSourceId of dedupedInputSourceIds) {
+			const resolvedSourceId = this.store.resolveSourceId(inputSourceId);
+			if (!resolvedSourceId) {
+				result[inputSourceId] = false;
+				continue;
+			}
+			const group = groupedByResolvedId.get(resolvedSourceId) ?? [];
+			group.push(inputSourceId);
+			groupedByResolvedId.set(resolvedSourceId, group);
+		}
+		if (groupedByResolvedId.size === 0) {
+			return result;
+		}
+
+		await this.ensureMcpConnected();
+		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+		await Promise.all(
+			[...groupedByResolvedId.entries()].map(async ([resolvedSourceId, inputSourceIds]) => {
+				const cached = this.researchSourceFetchabilityCache.get(resolvedSourceId);
+				if (typeof cached === "boolean") {
+					for (const inputSourceId of inputSourceIds) {
+						result[inputSourceId] = cached;
+					}
+					result[resolvedSourceId] = cached;
+					return;
+				}
+
+				try {
+					const toolResult = await this.mcpClient.callTool<JsonObject>(
+						"source_get_content",
+						{ source_id: resolvedSourceId },
+						{ idempotent: true, requestTimeoutMs: mcpRequestTimeoutMs },
+					);
+					this.ensureToolSuccess("source_get_content", toolResult);
+					this.researchSourceFetchabilityCache.set(resolvedSourceId, true);
+					for (const inputSourceId of inputSourceIds) {
+						result[inputSourceId] = true;
+					}
+					result[resolvedSourceId] = true;
+				} catch (error) {
+					this.logger.warn(
+						`Failed to retrieve research source content (${resolvedSourceId})`,
+						getErrorMessage(error),
+					);
+					this.researchSourceFetchabilityCache.set(resolvedSourceId, false);
+					for (const inputSourceId of inputSourceIds) {
+						result[inputSourceId] = false;
+					}
+					result[resolvedSourceId] = false;
+				}
+			}),
+		);
+
+		return result;
+	}
+
+	getActiveResearchSourceIds(): string[] {
+		const sourceIds = new Set<string>();
+		for (const operation of this.researchOperations.values()) {
+			if (operation.dismissed || operation.status !== "ready") {
+				continue;
+			}
+			for (const sourceItem of operation.sourceItems) {
+				const resolvedSourceId = this.store.resolveSourceId(sourceItem.sourceId);
+				if (!resolvedSourceId || !this.remoteSourceIds.has(resolvedSourceId)) {
+					continue;
+				}
+				sourceIds.add(resolvedSourceId);
+			}
+		}
+		return [...sourceIds];
+	}
+
+	dismissResearchOperation(operationId: string): void {
+		const operation = this.researchOperations.get(operationId);
+		if (!operation || operation.dismissed) {
+			return;
+		}
+		operation.dismissed = true;
+		operation.updatedAt = new Date().toISOString();
+		this.persistResearchOperation(operation);
+		this.emitResearchOperationUpdate();
+	}
+
+	clearResearchComposerOperations(): void {
+		let changed = false;
+		for (const operation of this.researchOperations.values()) {
+			if (operation.dismissed) {
+				continue;
+			}
+			operation.dismissed = true;
+			operation.updatedAt = new Date().toISOString();
+			this.persistResearchOperation(operation);
+			changed = true;
+		}
+		if (changed) {
+			this.emitResearchOperationUpdate();
+		}
+	}
+
+	executeResearchCommand(command: ExecutableResearchCommand): string {
+		const now = new Date().toISOString();
+		const operationId = `research-op-${crypto.randomUUID()}`;
+		const recordId = `research-record-${crypto.randomUUID()}`;
+		const query =
+			command.kind === "link"
+				? command.url
+				: command.kind === "links"
+					? command.urls.join(" ")
+					: command.query;
+		const links =
+			command.kind === "link"
+				? [command.url]
+				: command.kind === "links"
+					? [...command.urls]
+					: [];
+		const progressTotal = command.kind === "links" ? command.urls.length : 1;
+		const operation: ResearchOperationState = {
+			id: operationId,
+			recordId,
+			kind: command.kind,
+			status: "loading",
+			dismissed: false,
+			query,
+			links,
+			sourceItems: [],
+			linkKind: command.kind === "link" ? (command.isYouTube ? "youtube" : "url") : undefined,
+			progress: {
+				total: Math.max(1, progressTotal),
+				completed: 0,
+				percent: 0,
+			},
+			notebookId: null,
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.researchOperations.set(operationId, operation);
+		this.persistResearchOperation(operation);
+		this.emitResearchOperationUpdate();
+
+		void this.runResearchOperation(operationId, command);
+		return operationId;
 	}
 
 	getComposerSelectionUploadStatus(selection: ComposerSelectionItem): ComposerSelectionUploadStatus {
@@ -474,6 +737,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			includeBm25Search?: boolean;
 			excludedSourceIds?: string[];
 			excludedPaths?: string[];
+			manualSourceIds?: string[];
 		},
 	): Promise<void> {
 		const trimmedQuery = query.trim();
@@ -486,6 +750,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			(path) => !excludedPathSet.has(path),
 		);
 		const excludedSourceIdSet = this.normalizeExcludedSourceIds(options?.excludedSourceIds ?? []);
+		const manualSourceIds = this.normalizeManualSourceIds(
+			options?.manualSourceIds ?? [],
+			excludedSourceIdSet,
+		);
 		const includeBm25Search = this.shouldRunBm25ForQuery(options?.includeBm25Search);
 
 		const conversation = this.getActiveConversation();
@@ -581,7 +849,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			const selectedUploadPathSet = new Set(selectedUploadPaths);
 			const explicitUploadPaths = explicitPaths.filter((path) => selectedUploadPathSet.has(path));
 			const historicalSourceIds = this.getConversationReusableSourceIds(conversation, excludedSourceIdSet);
-			if (selectedUploadPaths.length === 0 && historicalSourceIds.length === 0) {
+				if (selectedUploadPaths.length === 0 && historicalSourceIds.length === 0 && manualSourceIds.length === 0) {
 				if (includeBm25Search && bm25Result) {
 					if (bm25Result.queryTokens.length === 0) {
 						throw new Error(
@@ -613,11 +881,16 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			} else {
 				searchDetailParts.push("BM25 search skipped for this question");
 			}
-			if (explicitUploadPaths.length > 0) {
-				searchDetailParts.push(
-					`manual selection added ${explicitUploadPaths.length} file${explicitUploadPaths.length === 1 ? "" : "s"}`,
-				);
-			}
+				if (explicitUploadPaths.length > 0) {
+					searchDetailParts.push(
+						`manual selection added ${explicitUploadPaths.length} file${explicitUploadPaths.length === 1 ? "" : "s"}`,
+					);
+				}
+				if (manualSourceIds.length > 0) {
+					searchDetailParts.push(
+						`research selection added ${manualSourceIds.length} source${manualSourceIds.length === 1 ? "" : "s"}`,
+					);
+				}
 			currentStep = "upload";
 				updateProgress({
 					steps: {
@@ -750,7 +1023,9 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				.map((path) => pathToSourceId[path])
 				.filter((value): value is string => typeof value === "string" && value.length > 0)
 				.filter((sourceId) => !excludedSourceIdSet.has(this.store.resolveSourceId(sourceId)));
-			const currentSelectionSourceIds = [...new Set([...bm25SourceIds, ...explicitSourceIds])];
+				const currentSelectionSourceIds = [
+					...new Set([...bm25SourceIds, ...explicitSourceIds, ...manualSourceIds]),
+				];
 
 				const sourceIdsSet = new Set(currentSelectionSourceIds);
 				const carriedFromHistory = historicalSourceIds.filter((sourceId) => !sourceIdsSet.has(sourceId));
@@ -762,12 +1037,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				const reusedFromSelectionCount = Math.max(0, currentSelectionSourceIds.length - newlyPreparedCount);
 			const totalQuerySourceCount = mergedSourceIds.length;
 			queryMetadata.selectedSourceIds = mergedSourceIds;
-			queryMetadata.sourceSummary = {
-				bm25SelectedCount: bm25SourceIds.length,
-				explicitSelectedCount: explicitSourceIds.length,
-				newlyPreparedCount,
-				reusedFromSelectionCount,
-				carriedFromHistoryCount: carriedFromHistory.length,
+				queryMetadata.sourceSummary = {
+					bm25SelectedCount: bm25SourceIds.length,
+					explicitSelectedCount: explicitSourceIds.length,
+					manualExternalSelectedCount: manualSourceIds.length,
+					newlyPreparedCount,
+					reusedFromSelectionCount,
+					carriedFromHistoryCount: carriedFromHistory.length,
 				totalQuerySourceCount,
 			};
 			currentStep = "response";
@@ -971,10 +1247,11 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					{ idempotent: true, requestTimeoutMs: mcpRequestTimeoutMs },
 				);
 				this.ensureToolSuccess("notebook_get", notebookResult);
-				this.updateRemoteSources(notebookResult);
-				this.store.reconcileSources(this.remoteSourceIds);
-				await this.store.save();
-				return notebookId;
+					this.updateRemoteSources(notebookResult);
+					this.store.reconcileSources(this.remoteSourceIds);
+					this.store.reconcileResearchRecords(this.remoteSourceIds);
+					await this.store.save();
+					return notebookId;
 			} catch (error) {
 				const message = getErrorMessage(error).toLowerCase();
 				if (!message.includes("not found") && !message.includes("404") && !message.includes("missing")) {
@@ -1001,9 +1278,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			notebook_id: notebookId,
 		}, { idempotent: true, requestTimeoutMs: mcpRequestTimeoutMs });
 		this.ensureToolSuccess("notebook_get", notebookResult);
-		this.updateRemoteSources(notebookResult);
-		this.store.reconcileSources(this.remoteSourceIds);
-		await this.store.save();
+			this.updateRemoteSources(notebookResult);
+			this.store.reconcileSources(this.remoteSourceIds);
+			this.store.reconcileResearchRecords(this.remoteSourceIds);
+			await this.store.save();
 
 		return notebookId;
 	}
@@ -1393,6 +1671,27 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return normalized;
 	}
 
+	private normalizeManualSourceIds(sourceIds: string[], excludedSourceIds: Set<string>): string[] {
+		const normalized = new Set<string>();
+		for (const sourceId of sourceIds) {
+			if (typeof sourceId !== "string" || sourceId.length === 0) {
+				continue;
+			}
+			const resolvedSourceId = this.store.resolveSourceId(sourceId);
+			if (!resolvedSourceId) {
+				continue;
+			}
+			if (excludedSourceIds.has(resolvedSourceId)) {
+				continue;
+			}
+			if (!this.remoteSourceIds.has(resolvedSourceId)) {
+				continue;
+			}
+			normalized.add(resolvedSourceId);
+		}
+		return [...normalized];
+	}
+
 	private startExplicitUploadWorker(): void {
 		if (this.explicitUploadWorkerPromise) {
 			return;
@@ -1610,6 +1909,765 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			() => undefined,
 		);
 		return resultPromise;
+	}
+
+	private async runResearchOperation(
+		operationId: string,
+		command: ExecutableResearchCommand,
+	): Promise<void> {
+		try {
+			const notebookId = await this.ensureNotebookReady();
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.notebookId = notebookId;
+				},
+				false,
+			);
+
+			if (command.kind === "link") {
+				await this.runSingleLinkResearchOperation(operationId, notebookId, command.url);
+				return;
+			}
+			if (command.kind === "links") {
+				await this.runMultiLinkResearchOperation(operationId, notebookId, command.urls);
+				return;
+			}
+			if (command.kind === "research-fast") {
+				await this.runFastOrDeepResearchOperation(operationId, notebookId, "fast", command.query);
+				return;
+			}
+			await this.runFastOrDeepResearchOperation(operationId, notebookId, "deep", command.query);
+		} catch (error) {
+			const message = getErrorMessage(error);
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.status = "error";
+					operation.error = message;
+					operation.progress.completed = operation.progress.total;
+					operation.progress.percent = 100;
+				},
+				true,
+			);
+		}
+	}
+
+	private async runSingleLinkResearchOperation(
+		operationId: string,
+		notebookId: string,
+		url: string,
+	): Promise<void> {
+		let addedSource: NotebookResearchSourceItem | null = null;
+		let firstError: string | null = null;
+		try {
+			addedSource = await this.addLinkSourceToNotebook(notebookId, url);
+		} catch (error) {
+			firstError = getErrorMessage(error);
+		}
+
+		const validatedResult = addedSource
+			? await this.validateImportedResearchSources([addedSource])
+			: { usableSources: [] as NotebookResearchSourceItem[], failedLinks: [] as string[] };
+		const usableSources = validatedResult.usableSources;
+		const failedLinkSet = new Set<string>(validatedResult.failedLinks);
+		if (usableSources.length === 0) {
+			failedLinkSet.add(url);
+		}
+		const failedCount = failedLinkSet.size;
+		const status: NotebookResearchStatus = usableSources.length > 0 ? "ready" : "error";
+		const errorMessage =
+			status === "ready"
+				? firstError ?? undefined
+				: firstError ??
+					(failedCount > 0
+						? "Link could not be retrieved from NotebookLM and was removed automatically."
+						: "No link was added to NotebookLM.");
+		this.updateResearchOperation(
+			operationId,
+			(operation) => {
+				operation.sourceItems = usableSources;
+				operation.links = [url];
+				operation.status = status;
+				operation.error = errorMessage;
+				operation.progress.completed = operation.progress.total;
+				operation.progress.percent = 100;
+			},
+			true,
+		);
+	}
+
+	private async runMultiLinkResearchOperation(
+		operationId: string,
+		notebookId: string,
+		urls: string[],
+	): Promise<void> {
+		const addedSources: NotebookResearchSourceItem[] = [];
+		const failedAddLinks: string[] = [];
+		let completed = 0;
+		let firstError: string | null = null;
+		for (const url of urls) {
+			try {
+				const source = await this.addLinkSourceToNotebook(notebookId, url);
+				addedSources.push(source);
+			} catch (error) {
+				failedAddLinks.push(url);
+				if (!firstError) {
+					firstError = getErrorMessage(error);
+				}
+			} finally {
+				completed += 1;
+				const percent = Math.min(100, Math.round((completed / Math.max(1, urls.length)) * 100));
+				this.updateResearchOperation(
+					operationId,
+					(operation) => {
+						operation.progress.completed = completed;
+						operation.progress.percent = percent;
+					},
+					false,
+				);
+			}
+		}
+
+		const validatedResult =
+			addedSources.length > 0
+				? await this.validateImportedResearchSources(addedSources)
+				: { usableSources: [] as NotebookResearchSourceItem[], failedLinks: [] as string[] };
+		const usableSources = validatedResult.usableSources;
+		const failedLinkSet = new Set<string>([...failedAddLinks, ...validatedResult.failedLinks]);
+		if (usableSources.length === 0) {
+			for (const url of urls) {
+				failedLinkSet.add(url);
+			}
+		}
+		const failedCount = failedLinkSet.size;
+		const status: NotebookResearchStatus = usableSources.length > 0 ? "ready" : "error";
+		const errorMessage =
+			status === "ready"
+				? firstError ??
+					(failedCount > 0
+						? `${failedCount} link${failedCount === 1 ? "" : "s"} could not be retrieved and were removed from NotebookLM sources.`
+						: undefined)
+				: firstError ??
+					(failedCount > 0
+						? "No links were retrievable from NotebookLM. Failed links remain available to open in browser."
+						: "No links were added to NotebookLM.");
+
+		this.updateResearchOperation(
+			operationId,
+			(operation) => {
+				operation.sourceItems = usableSources;
+				operation.links = [...urls];
+				operation.status = status;
+				operation.error = errorMessage;
+				operation.progress.completed = operation.progress.total;
+				operation.progress.percent = 100;
+			},
+			true,
+		);
+	}
+
+	private async runFastOrDeepResearchOperation(
+		operationId: string,
+		notebookId: string,
+		mode: "fast" | "deep",
+		query: string,
+	): Promise<void> {
+		const baselineSourceIds = new Set<string>();
+		for (const sourceId of this.remoteSourceIds) {
+			const resolvedSourceId = this.store.resolveSourceId(sourceId);
+			if (resolvedSourceId) {
+				baselineSourceIds.add(resolvedSourceId);
+			}
+		}
+
+		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+		const trackingQuery = buildResearchTrackingQuery(query);
+		const startResult = await this.mcpClient.callTool<JsonObject>(
+			"research_start",
+			{
+				query: trackingQuery,
+				source: "web",
+				mode,
+				notebook_id: notebookId,
+			},
+			{
+				requestTimeoutMs: mcpRequestTimeoutMs,
+				resetTimeoutOnProgress: true,
+			},
+		);
+		this.ensureToolSuccess("research_start", startResult);
+		const startTaskId = typeof startResult.task_id === "string" ? startResult.task_id : null;
+		if (!startTaskId) {
+			throw new Error("research_start succeeded but task_id is missing.");
+		}
+
+		this.updateResearchOperation(
+			operationId,
+			(operation) => {
+				operation.startTaskId = startTaskId;
+				operation.taskId = startTaskId;
+			},
+			false,
+		);
+
+		const tracker = await trackResearchStatus({
+			mode,
+			notebookId,
+			query: trackingQuery,
+			startTaskId,
+			pollStatus: async ({ taskId, query: statusQuery }) =>
+				this.mcpClient.callTool<JsonObject>(
+					"research_status",
+					{
+						notebook_id: notebookId,
+						task_id: taskId,
+						query: statusQuery,
+						compact: false,
+					},
+					{
+						requestTimeoutMs: mcpRequestTimeoutMs,
+						resetTimeoutOnProgress: true,
+					},
+				),
+			onUpdate: ({ currentTaskId }) => {
+				this.updateResearchOperation(
+					operationId,
+					(operation) => {
+						if (currentTaskId) {
+							operation.taskId = currentTaskId;
+						}
+					},
+					false,
+				);
+			},
+		});
+
+		const finalResponse = tracker.response && isRecord(tracker.response) ? tracker.response : {};
+		const sourcesRaw = Array.isArray(finalResponse.sources) ? finalResponse.sources : [];
+		const normalizedSources = sourcesRaw.map((source, fallbackIndex) => {
+			if (!isRecord(source)) {
+				return {
+					index: fallbackIndex,
+					title: "",
+					url: "",
+					resultTypeName: "",
+				};
+			}
+			return {
+				index:
+					typeof source.index === "number" && Number.isFinite(source.index)
+						? Math.floor(source.index)
+						: fallbackIndex,
+				title: typeof source.title === "string" ? source.title : "",
+				url: typeof source.url === "string" ? source.url : "",
+				resultTypeName: typeof source.result_type_name === "string" ? source.result_type_name : "",
+			};
+		});
+		const discoveredLinks = normalizedSources
+			.map((item) => item.url)
+			.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+		if (tracker.status === "timeout" || tracker.status === "error") {
+			const cleanupFailedLinks = await this.cleanupUnusableNewResearchSources(
+				notebookId,
+				baselineSourceIds,
+				new Set<string>(),
+			);
+			const message =
+				tracker.status === "timeout"
+					? "Research polling timed out."
+					: `Research polling failed${typeof finalResponse.error === "string" ? `: ${finalResponse.error}` : "."}`;
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.status = "error";
+					operation.error = message;
+					operation.links = [...new Set([...discoveredLinks, ...cleanupFailedLinks])];
+					operation.progress.completed = operation.progress.total;
+					operation.progress.percent = 100;
+					operation.taskId = tracker.taskId ?? operation.taskId;
+				},
+				true,
+			);
+			return;
+		}
+
+		if (tracker.status === "no_research") {
+			const cleanupFailedLinks = await this.cleanupUnusableNewResearchSources(
+				notebookId,
+				baselineSourceIds,
+				new Set<string>(),
+			);
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.status = "no_research";
+					operation.links = [...new Set([...discoveredLinks, ...cleanupFailedLinks])];
+					operation.report = typeof finalResponse.report === "string" ? finalResponse.report : undefined;
+					operation.progress.completed = operation.progress.total;
+					operation.progress.percent = 100;
+					operation.taskId = tracker.taskId ?? operation.taskId;
+				},
+				true,
+			);
+			return;
+		}
+
+		const importIndices = getResearchImportIndices(
+			mode,
+			normalizedSources.map((item) => ({
+				index: item.index,
+				title: item.title,
+				url: item.url,
+				result_type_name: item.resultTypeName,
+			})),
+		);
+		const importCandidateLinks = importIndices
+			.map((index) => normalizedSources.find((source) => source.index === index)?.url ?? "")
+			.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+		if (importIndices.length === 0) {
+			const cleanupFailedLinks = await this.cleanupUnusableNewResearchSources(
+				notebookId,
+				baselineSourceIds,
+				new Set<string>(),
+			);
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.status = "no_research";
+					operation.links = [...new Set([...importCandidateLinks, ...cleanupFailedLinks])];
+					operation.report = typeof finalResponse.report === "string" ? finalResponse.report : undefined;
+					operation.progress.completed = operation.progress.total;
+					operation.progress.percent = 100;
+					operation.taskId = tracker.taskId ?? operation.taskId;
+				},
+				true,
+			);
+			return;
+		}
+
+		const importResult = await this.mcpClient.callTool<JsonObject>(
+			"research_import",
+			{
+				notebook_id: notebookId,
+				task_id: tracker.taskId ?? startTaskId,
+				source_indices: importIndices,
+			},
+			{
+				requestTimeoutMs: mcpRequestTimeoutMs,
+				resetTimeoutOnProgress: true,
+			},
+		);
+		this.ensureToolSuccess("research_import", importResult);
+		const importedRaw = Array.isArray(importResult.imported_sources) ? importResult.imported_sources : [];
+		const selectedSources = importIndices.map((index) =>
+			normalizedSources.find((source) => source.index === index),
+		);
+		const importedSources: NotebookResearchSourceItem[] = [];
+		for (let index = 0; index < importedRaw.length; index += 1) {
+			const item = importedRaw[index];
+			if (!isRecord(item)) {
+				continue;
+			}
+			const sourceId = typeof item.id === "string" ? item.id : "";
+			const title = typeof item.title === "string" ? item.title : "";
+			if (!sourceId || !title) {
+				continue;
+			}
+			const sourceFromStatus = selectedSources[index];
+			importedSources.push({
+				sourceId,
+				title,
+				url: sourceFromStatus?.url || undefined,
+				sourceType: sourceFromStatus?.resultTypeName || undefined,
+			});
+		}
+
+		if (importedSources.length === 0) {
+			const cleanupFailedLinks = await this.cleanupUnusableNewResearchSources(
+				notebookId,
+				baselineSourceIds,
+				new Set<string>(),
+			);
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.status = "no_research";
+					operation.error = "research_import completed but did not return importable sources.";
+					operation.links = [...new Set([...importCandidateLinks, ...cleanupFailedLinks])];
+					operation.report = typeof finalResponse.report === "string" ? finalResponse.report : undefined;
+					operation.progress.completed = operation.progress.total;
+					operation.progress.percent = 100;
+					operation.taskId = tracker.taskId ?? operation.taskId;
+				},
+				true,
+			);
+			return;
+		}
+
+		const validatedImportResult = await this.validateImportedResearchSources(importedSources);
+		const usableSources = validatedImportResult.usableSources;
+		const failedLinks = validatedImportResult.failedLinks;
+		const retainedSourceIds = new Set<string>(
+			usableSources
+				.map((source) => this.store.resolveSourceId(source.sourceId))
+				.filter((value): value is string => typeof value === "string" && value.length > 0),
+		);
+		const cleanupFailedLinks = await this.cleanupUnusableNewResearchSources(
+			notebookId,
+			baselineSourceIds,
+			retainedSourceIds,
+		);
+		const visibleLinks = [...new Set([...importCandidateLinks, ...failedLinks, ...cleanupFailedLinks])];
+		if (usableSources.length === 0) {
+			this.updateResearchOperation(
+				operationId,
+				(operation) => {
+					operation.status = "no_research";
+					operation.error =
+						"Imported links could not be retrieved from NotebookLM and were removed automatically.";
+					operation.links = visibleLinks;
+					operation.report = typeof finalResponse.report === "string" ? finalResponse.report : undefined;
+					operation.progress.completed = operation.progress.total;
+					operation.progress.percent = 100;
+					operation.taskId = tracker.taskId ?? operation.taskId;
+				},
+				true,
+			);
+			return;
+		}
+
+		this.updateResearchOperation(
+			operationId,
+			(operation) => {
+				operation.status = "ready";
+				operation.sourceItems = usableSources;
+				operation.links = visibleLinks;
+				operation.report = typeof finalResponse.report === "string" ? finalResponse.report : undefined;
+				operation.progress.completed = operation.progress.total;
+				operation.progress.percent = 100;
+				operation.taskId = tracker.taskId ?? operation.taskId;
+				operation.error =
+					failedLinks.length > 0
+						? `${failedLinks.length} imported link${failedLinks.length === 1 ? "" : "s"} could not be retrieved and were removed from NotebookLM sources.`
+						: undefined;
+			},
+			true,
+		);
+	}
+
+	private async validateImportedResearchSources(
+		sources: NotebookResearchSourceItem[],
+	): Promise<{ usableSources: NotebookResearchSourceItem[]; failedLinks: string[] }> {
+		const usableSources: NotebookResearchSourceItem[] = [];
+		const failedLinks: string[] = [];
+		const validationResults = await Promise.all(
+			sources.map(async (source) => {
+				const resolvedSourceId = this.store.resolveSourceId(source.sourceId);
+				const sourceUrl = typeof source.url === "string" ? source.url.trim() : "";
+				if (!resolvedSourceId) {
+					return {
+						usableSource: null as NotebookResearchSourceItem | null,
+						failedLink: sourceUrl || null,
+					};
+				}
+
+				const usable = await this.isSourceContentUsableAfterValidationRetries(resolvedSourceId);
+				if (usable) {
+					this.researchSourceFetchabilityCache.set(resolvedSourceId, true);
+					this.remoteSourceIds.add(resolvedSourceId);
+					return {
+						usableSource: {
+							...source,
+							sourceId: resolvedSourceId,
+						},
+						failedLink: null as string | null,
+					};
+				}
+
+				this.researchSourceFetchabilityCache.set(resolvedSourceId, false);
+				await this.deleteResearchSourceIfExists(resolvedSourceId);
+				return {
+					usableSource: null as NotebookResearchSourceItem | null,
+					failedLink: sourceUrl || null,
+				};
+			}),
+		);
+
+		for (const result of validationResults) {
+			if (result.usableSource) {
+				usableSources.push(result.usableSource);
+			}
+			if (result.failedLink) {
+				failedLinks.push(result.failedLink);
+			}
+		}
+
+		return {
+			usableSources,
+			failedLinks: [...new Set(failedLinks)],
+		};
+	}
+
+	private async cleanupUnusableNewResearchSources(
+		notebookId: string,
+		baselineSourceIds: Set<string>,
+		retainedSourceIds: Set<string>,
+	): Promise<string[]> {
+		let notebookResult: JsonObject;
+		try {
+			notebookResult = await this.mcpClient.callTool<JsonObject>(
+				"notebook_get",
+				{ notebook_id: notebookId },
+				{ idempotent: true, requestTimeoutMs: this.getSafeMcpRequestTimeoutMs() },
+			);
+			this.ensureToolSuccess("notebook_get", notebookResult);
+		} catch (error) {
+			this.logger.warn("Failed to load notebook sources for research cleanup", getErrorMessage(error));
+			return [];
+		}
+
+		this.updateRemoteSources(notebookResult);
+		const notebookSources = this.extractNotebookSources(notebookResult);
+		const cleanupCandidates = notebookSources
+			.map((source) => ({
+				sourceId: this.store.resolveSourceId(source.id),
+				title: source.title,
+			}))
+			.filter((item) => typeof item.sourceId === "string" && item.sourceId.length > 0)
+			.map((item) => ({
+				sourceId: item.sourceId as string,
+				title: item.title,
+			}))
+			.filter(
+				(item) =>
+					!baselineSourceIds.has(item.sourceId) && !retainedSourceIds.has(item.sourceId),
+			);
+		if (cleanupCandidates.length === 0) {
+			return [];
+		}
+
+		const failedLinks: string[] = [];
+		await Promise.all(
+			cleanupCandidates.map(async (candidate) => {
+				const usable = await this.isSourceContentUsableAfterValidationRetries(candidate.sourceId);
+				if (usable) {
+					this.researchSourceFetchabilityCache.set(candidate.sourceId, true);
+					return;
+				}
+
+				this.researchSourceFetchabilityCache.set(candidate.sourceId, false);
+				await this.deleteResearchSourceIfExists(candidate.sourceId);
+				const failedLink = parseHttpUrl(candidate.title);
+				if (failedLink) {
+					failedLinks.push(failedLink);
+				}
+			}),
+		);
+
+		return [...new Set(failedLinks)];
+	}
+
+	private async isSourceContentUsableAfterValidationRetries(sourceId: string): Promise<boolean> {
+		if (!sourceId) {
+			return false;
+		}
+
+		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+		for (const delayMs of IMPORTED_SOURCE_VALIDATION_DELAYS_MS) {
+			await this.sleepForImportedSourceValidation(delayMs);
+			try {
+				const contentResult = await this.mcpClient.callTool<JsonObject>(
+					"source_get_content",
+					{ source_id: sourceId },
+					{ idempotent: true, requestTimeoutMs: mcpRequestTimeoutMs },
+				);
+				const failure = this.getToolFailure(contentResult);
+				if (failure) {
+					continue;
+				}
+				if (this.isSourceContentUsable(contentResult)) {
+					return true;
+				}
+			} catch {
+				// Continue retry schedule (10s -> 20s -> 30s).
+			}
+		}
+
+		return false;
+	}
+
+	private sleepForImportedSourceValidation(ms: number): Promise<void> {
+		return new Promise((resolve) => {
+			globalThis.setTimeout(resolve, Math.max(0, ms));
+		});
+	}
+
+	private isSourceContentUsable(toolResult: unknown): boolean {
+		if (!isRecord(toolResult)) {
+			return false;
+		}
+		const content = typeof toolResult.content === "string" ? toolResult.content.trim() : "";
+		if (content.length > 0) {
+			return true;
+		}
+
+		const charCount =
+			typeof toolResult.char_count === "number"
+				? toolResult.char_count
+				: typeof toolResult.charCount === "number"
+					? toolResult.charCount
+					: null;
+		return typeof charCount === "number" && Number.isFinite(charCount) && charCount > 0;
+	}
+
+	private async deleteResearchSourceIfExists(sourceId: string): Promise<void> {
+		if (!sourceId) {
+			return;
+		}
+		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+		try {
+			const deleteResult = await this.mcpClient.callTool<JsonObject>(
+				"source_delete",
+				{
+					source_id: sourceId,
+					confirm: true,
+				},
+				{
+					requestTimeoutMs: mcpRequestTimeoutMs,
+					resetTimeoutOnProgress: true,
+				},
+			);
+			const failure = this.getToolFailure(deleteResult);
+			if (failure && !failure.toLocaleLowerCase().includes("not found")) {
+				this.logger.warn("Failed to delete unusable research source", {
+					sourceId,
+					failure,
+				});
+				return;
+			}
+		} catch (error) {
+			const message = getErrorMessage(error);
+			if (!message.toLocaleLowerCase().includes("not found")) {
+				this.logger.warn("Failed to delete unusable research source", {
+					sourceId,
+					error: message,
+				});
+				return;
+			}
+		}
+
+		this.remoteSourceIds.delete(sourceId);
+	}
+
+	private async addLinkSourceToNotebook(
+		notebookId: string,
+		url: string,
+	): Promise<NotebookResearchSourceItem> {
+		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
+		const addWithArgs = async (args: Record<string, unknown>): Promise<NotebookResearchSourceItem> => {
+			const result = await this.mcpClient.callTool<JsonObject>("source_add", args, {
+				requestTimeoutMs: mcpRequestTimeoutMs,
+				resetTimeoutOnProgress: true,
+			});
+			this.ensureToolSuccess("source_add", result);
+			const sourceId = this.extractSourceId(result);
+			if (!sourceId) {
+				throw new Error("source_add succeeded but source_id is missing.");
+			}
+			const title = this.extractSourceTitle(result) ?? url;
+			const sourceType = typeof result.source_type === "string" ? result.source_type : undefined;
+			return {
+				sourceId,
+				title,
+				url,
+				sourceType,
+			};
+		};
+
+		return await addWithArgs({
+			notebook_id: notebookId,
+			source_type: "url",
+			url,
+			wait: true,
+		});
+	}
+
+	private extractSourceTitle(toolResult: unknown): string | null {
+		if (!isRecord(toolResult)) {
+			return null;
+		}
+		if (typeof toolResult.title === "string" && toolResult.title.trim().length > 0) {
+			return toolResult.title.trim();
+		}
+		if (isRecord(toolResult.source) && typeof toolResult.source.title === "string") {
+			return toolResult.source.title;
+		}
+		return null;
+	}
+
+	private updateResearchOperation(
+		operationId: string,
+		updater: (operation: ResearchOperationState) => void,
+		persist: boolean,
+	): void {
+		const operation = this.researchOperations.get(operationId);
+		if (!operation) {
+			return;
+		}
+		updater(operation);
+		operation.updatedAt = new Date().toISOString();
+		if (persist) {
+			this.persistResearchOperation(operation);
+		}
+		this.emitResearchOperationUpdate();
+	}
+
+	private persistResearchOperation(operation: ResearchOperationState): void {
+		const record: NotebookResearchRecord = {
+			id: operation.recordId,
+			kind: operation.kind,
+			status: operation.status,
+			query: operation.query,
+			links: [...operation.links],
+			sourceItems: operation.sourceItems.map((item) => ({ ...item })),
+			report: operation.report,
+			error: operation.error,
+			notebookId: operation.notebookId,
+			startTaskId: operation.startTaskId,
+			taskId: operation.taskId,
+			createdAt: operation.createdAt,
+			updatedAt: operation.updatedAt,
+		};
+		this.store.upsertResearchRecord(record);
+		void this.store.save().catch((error) => {
+			this.logger.warn("Failed to persist research record", getErrorMessage(error));
+		});
+	}
+
+	private emitResearchOperationUpdate(): void {
+		for (const listener of this.researchOperationListeners) {
+			try {
+				listener();
+			} catch {
+				// Ignore listener failures.
+			}
+		}
+	}
+
+	private getResearchRecordDisplayTitle(record: NotebookResearchRecord): string {
+		if (record.kind === "link") {
+			return record.sourceItems[0]?.title || record.query;
+		}
+		if (record.kind === "links") {
+			const title = record.sourceItems[0]?.title || record.links[0] || record.query;
+			return `${title} (${record.sourceItems.length})`;
+		}
+		if (record.kind === "research-fast") {
+			return `${record.query} (${record.sourceItems.length})`;
+		}
+		return `${record.query} (${record.sourceItems.length})`;
 	}
 
 	private toExplicitSelectionMetadata(selections: ComposerSelectionItem[]): ExplicitSelectionMetadata[] {

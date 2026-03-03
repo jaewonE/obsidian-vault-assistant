@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.5.0`
+Version: `0.6.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -30,13 +30,28 @@ The plugin provides a right-sidebar chat workflow:
   - supports search terms with spaces and underscore-to-space matching
   - selected files/paths start sequential source upload immediately after selection
 - Slash command autocomplete in composer:
-  - type `/` to show available root commands (`/source`, `/create`, `/setting`)
+  - type `/` to show available root commands (`/source`, `/create`, `/setting`, `/research`)
   - root command list is filtered by typed text (for example `/s`)
-  - subcommands are suggested after a completed root command (for example `/source ` -> `/source add`, `/source get`)
+  - subcommands are suggested after a completed root command (for example `/source ` -> `/source add`, `/source get`; `/research ` -> `/research links`, `/research deep`)
   - subcommand list is filtered while typing (for example `/source ad` -> `/source add`)
   - pressing `Enter` with an active suggestion autocompletes to the selected command text instead of sending
   - when no command matches (for example `/source edit`), the suggestion panel is hidden and `Enter` performs normal query send
   - slash command rows are rendered with a distinct command-style background pill in the suggestion list
+- `/research` command execution (does not add chat message history entries):
+  - `/research <single-http-url>`: add one NotebookLM source via `source_type=url` (works for regular web links and YouTube links)
+  - `/research links <url...>`: sequentially add multiple links as NotebookLM sources
+  - `/research <query>`: run NotebookLM fast research, import discovered web sources, and keep source IDs for follow-up query scope
+  - `/research deep <query>`: run NotebookLM deep research with mutable `task_id` tracking (`task_id` + `query` polling), import eligible web sources, and store deep report markdown for modal viewing
+  - all `/research` sources are stored as NotebookLM metadata only (source IDs, titles, urls, query/report metadata). Raw source content remains in NotebookLM unless explicitly fetched later.
+- Research chips in composer (same chip area as `@` / `@@`):
+  - dedicated non-local icons for link(url), link(youtube), links, research fast, research deep
+  - loading spinner for all research types, with `%` progress center for `links`
+  - hover-to-show `x` remove behavior; removing a loading research chip excludes it from query scope/UI but does not cancel the underlying NotebookLM operation
+  - `no_research` / `error` research results are marked with a light-red chip background and are excluded from query `source_ids`
+- Research source click behavior (composer chips + assistant source list):
+  - link: open URL directly in default browser
+  - links/research fast: open modal to choose URL (title + muted link text)
+  - research deep: open deep report modal rendered via `MarkdownRenderer.render`
 - Extension-aware source upload:
   - `.md` and `.txt` are uploaded as `source_type=text`
   - allowed non-text/media extensions are uploaded as `source_type=file`
@@ -135,9 +150,10 @@ npm test
 4. Run command: `Open NotebookLM chat`.
 5. Ask questions in the right sidebar chat view.
 6. Optionally add explicit sources via `@` / `@@` before sending.
-7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, and `/source` subcommands).
-8. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
-9. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
+7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, `/research`, and supported subcommands).
+8. Run `/research` commands from the same composer to prepare NotebookLM-only sources without adding chat history messages.
+9. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
+10. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
 ## Settings
 

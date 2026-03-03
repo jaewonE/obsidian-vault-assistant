@@ -6,7 +6,7 @@ test("returns all root slash commands for empty term", () => {
 	const suggestions = searchSlashCommandSuggestions("");
 	assert.deepEqual(
 		suggestions.map((item) => item.text),
-		["/source", "/create", "/setting"],
+		["/source", "/create", "/setting", "/research"],
 	);
 });
 
@@ -15,6 +15,14 @@ test("filters root slash commands by typed text", () => {
 	assert.deepEqual(
 		suggestions.map((item) => item.text),
 		["/source", "/setting"],
+	);
+});
+
+test("filters root slash commands by research prefix", () => {
+	const suggestions = searchSlashCommandSuggestions("re");
+	assert.deepEqual(
+		suggestions.map((item) => item.text),
+		["/research"],
 	);
 });
 
@@ -37,4 +45,20 @@ test("filters source subcommands by typed subcommand text", () => {
 test("returns no suggestions when subcommand does not match", () => {
 	const suggestions = searchSlashCommandSuggestions("source edit");
 	assert.equal(suggestions.length, 0);
+});
+
+test("shows research subcommands after root command is completed", () => {
+	const suggestions = searchSlashCommandSuggestions("research ");
+	assert.deepEqual(
+		suggestions.map((item) => item.text),
+		["/research links", "/research deep"],
+	);
+});
+
+test("filters research subcommands", () => {
+	const suggestions = searchSlashCommandSuggestions("research de");
+	assert.deepEqual(
+		suggestions.map((item) => item.text),
+		["/research deep"],
+	);
 });

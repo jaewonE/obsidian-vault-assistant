@@ -31,11 +31,40 @@ export interface SourceEvictionRecord {
 export interface QuerySourceSummary {
 	bm25SelectedCount: number;
 	explicitSelectedCount?: number;
+	manualExternalSelectedCount?: number;
 	newlyPreparedCount: number;
 	reusedFromSelectionCount: number;
 	carriedFromHistoryCount: number;
 	totalQuerySourceCount: number;
 }
+
+export type ResearchCommandKind = "link" | "links" | "research-fast" | "research-deep";
+
+export type ResearchCommandParseResult =
+	| {
+			kind: "none";
+	  }
+	| {
+			kind: "invalid";
+			error: string;
+	  }
+	| {
+			kind: "link";
+			url: string;
+			isYouTube: boolean;
+	  }
+	| {
+			kind: "links";
+			urls: string[];
+	  }
+	| {
+			kind: "research-fast";
+			query: string;
+	  }
+	| {
+			kind: "research-deep";
+			query: string;
+	  };
 
 export type AddFilePathMode = "markdown" | "all";
 
@@ -102,6 +131,33 @@ export interface ConversationRecord {
 	errors?: string[];
 }
 
+export type NotebookResearchStatus = "loading" | "ready" | "no_research" | "error";
+
+export type ResearchLinkKind = "url" | "youtube";
+
+export interface NotebookResearchSourceItem {
+	sourceId: string;
+	title: string;
+	url?: string;
+	sourceType?: string;
+}
+
+export interface NotebookResearchRecord {
+	id: string;
+	kind: ResearchCommandKind;
+	status: NotebookResearchStatus;
+	query: string;
+	links: string[];
+	sourceItems: NotebookResearchSourceItem[];
+	report?: string;
+	error?: string;
+	notebookId: string | null;
+	startTaskId?: string;
+	taskId?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
 export type SourceSegment = "probation" | "protected";
 
 export interface SourceRegistryEntry {
@@ -156,6 +212,8 @@ export interface NotebookLMPluginData {
 	sourceRegistry: SourceRegistryState;
 	bm25Index: BM25CachedIndexState | null;
 	conversationHistory: ConversationRecord[];
+	researchRecords: NotebookResearchRecord[];
+	researchSourceIndex: Record<string, string>;
 }
 
 export type QueryProgressStepState = "pending" | "active" | "done" | "failed";
@@ -184,6 +242,31 @@ export interface QuerySourceItem {
 	sourceId: string;
 	path: string;
 	title: string;
+	kind: "local" | ResearchCommandKind;
+	researchRecordId?: string;
+}
+
+export interface ResearchOperationProgress {
+	total: number;
+	completed: number;
+	percent: number;
+}
+
+export interface ResearchOperationView {
+	id: string;
+	recordId: string;
+	kind: ResearchCommandKind;
+	status: NotebookResearchStatus;
+	dismissed: boolean;
+	query: string;
+	links: string[];
+	sourceItems: NotebookResearchSourceItem[];
+	report?: string;
+	error?: string;
+	linkKind?: ResearchLinkKind;
+	progress: ResearchOperationProgress;
+	createdAt: string;
+	updatedAt: string;
 }
 
 export const MAX_NOTEBOOK_SOURCES = 300;
@@ -215,4 +298,6 @@ export const DEFAULT_PLUGIN_DATA: NotebookLMPluginData = {
 	sourceRegistry: DEFAULT_SOURCE_REGISTRY,
 	bm25Index: null,
 	conversationHistory: [],
+	researchRecords: [],
+	researchSourceIndex: {},
 };

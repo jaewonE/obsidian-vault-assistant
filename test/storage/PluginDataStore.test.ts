@@ -421,3 +421,68 @@ test("normalizes explicit selection metadata in query records", async () => {
 	assert.equal(conversation?.queryMetadata[0]?.explicitSelections?.[0]?.path, "docs/topic");
 	assert.equal(conversation?.queryMetadata[0]?.sourceSummary?.explicitSelectedCount, 2);
 });
+
+test("persists research records and resolves by source id", async () => {
+	const persistence = new InMemoryPersistence();
+	const store = new PluginDataStore(persistence);
+	await store.load();
+
+	const now = new Date().toISOString();
+	store.upsertResearchRecord({
+		id: "research-1",
+		kind: "research-fast",
+		status: "ready",
+		query: "model context protocol",
+		links: ["https://example.com/a"],
+		sourceItems: [
+			{
+				sourceId: "source-r1",
+				title: "Example A",
+				url: "https://example.com/a",
+			},
+		],
+		notebookId: "nb-1",
+		createdAt: now,
+		updatedAt: now,
+	});
+	await store.save();
+
+	const reloaded = new PluginDataStore(persistence);
+	await reloaded.load();
+
+	const byId = reloaded.getResearchRecordById("research-1");
+	assert.ok(byId);
+	assert.equal(byId?.sourceItems[0]?.sourceId, "source-r1");
+	const bySource = reloaded.getResearchRecordBySourceId("source-r1");
+	assert.ok(bySource);
+	assert.equal(bySource?.id, "research-1");
+});
+
+test("reconcileResearchRecords marks ready research as error when remote sources disappear", async () => {
+	const persistence = new InMemoryPersistence();
+	const store = new PluginDataStore(persistence);
+	await store.load();
+
+	const now = new Date().toISOString();
+	store.upsertResearchRecord({
+		id: "research-2",
+		kind: "links",
+		status: "ready",
+		query: "links query",
+		links: ["https://example.com/a", "https://example.com/b"],
+		sourceItems: [
+			{
+				sourceId: "source-r2",
+				title: "Example A",
+				url: "https://example.com/a",
+			},
+		],
+		notebookId: "nb-1",
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	store.reconcileResearchRecords(new Set());
+	const updated = store.getResearchRecordById("research-2");
+	assert.equal(updated?.status, "error");
+});

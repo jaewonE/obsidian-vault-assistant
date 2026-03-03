@@ -1,20 +1,21 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.5.0)
+# BM25 + NotebookLM Algorithms and Implementation (v0.6.0)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.5.0` for:
+This document specifies the production algorithms used in `v0.6.0` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
-5. Slash command and subcommand autocomplete in composer (`/source`, `/create`, `/setting`, `/source add`, `/source get`).
+5. Slash command and subcommand autocomplete in composer (`/source`, `/create`, `/setting`, `/research`, `/source add`, `/source get`, `/research links`, `/research deep`).
+6. NotebookLM-only `/research` source lifecycle (link, links, fast, deep) with non-local chip UX and query-source merging.
 
-`v0.5.0` keeps BM25 scoring/indexing behavior unchanged, preserves explicit-source pre-upload behavior from `v0.4.4`, and adds slash-command/subcommand autocomplete behavior in composer mention UX.
+`v0.6.0` keeps BM25 scoring/indexing behavior unchanged, preserves explicit-source pre-upload behavior from `v0.4.4`, and adds executable `/research` command behavior plus NotebookLM-only research source tracking.
 
 ---
 
-## 2. Runtime architecture (v0.5.0)
+## 2. Runtime architecture (v0.6.0)
 
 Main components:
 
@@ -36,6 +37,11 @@ Main components:
 - UI:
   - `src/ui/ChatView.ts`
   - `src/ui/slashCommands.ts`
+  - `src/ui/researchCommands.ts`
+  - `src/ui/ResearchLinksModal.ts`
+  - `src/ui/DeepResearchReportModal.ts`
+- Research polling/import:
+  - `src/plugin/researchTracking.ts`
 - MCP transport/retry:
   - `src/mcp/NotebookLMMcpClient.ts`
 
@@ -79,11 +85,13 @@ Given textarea value and cursor position:
 
 ### 3.4 Slash command candidate generation and completion
 
-1. For empty slash term, return root commands: `/source`, `/create`, `/setting`.
+1. For empty slash term, return root commands: `/source`, `/create`, `/setting`, `/research`.
 2. For partial root term (for example `s`), return root commands with `startsWith` match.
 3. If root command is fully typed and followed by space (for example `source `), return supported subcommands for that root:
    - `/source add`
    - `/source get`
+   - `/research links`
+   - `/research deep`
 4. Apply `startsWith` filtering on subcommand input (for example `source ad` -> `/source add`).
 5. If slash token has zero candidates, hide command suggestion panel for that token.
 6. On `Enter` while panel is visible, select hovered/keyboard-active candidate; if none active, select top candidate.
@@ -253,15 +261,55 @@ Implementation: `src/ui/ChatView.ts`, `styles.css`
 
 ---
 
-## 11. Verification
+## 11. `/research` command and non-local source algorithm
+
+Implementation: `src/ui/researchCommands.ts`, `src/plugin/NotebookLMPlugin.ts`, `src/plugin/researchTracking.ts`, `src/storage/PluginDataStore.ts`
+
+1. `/research` command parsing:
+   - `/research <http-url>` -> `link`
+   - `/research links <http-url ...>` -> `links`
+   - `/research deep <query>` -> `research-deep`
+   - `/research <non-url-query>` -> `research-fast`
+2. Command execution is asynchronous and does not append user/assistant chat messages.
+3. Link upload policy:
+   - single-link and multi-link use NotebookLM `source_add` with `wait=true`
+   - all links (including YouTube) are sent with `source_type=url`
+4. Fast/deep research policy:
+   - call `research_start`
+   - build a stable tracking query by appending a unique run token (`[run-...]`)
+   - poll `research_status` using both `task_id` and `query`
+   - if deep response mutates `task_id`, update tracker pointer immediately
+5. Poll scheduler policy:
+   - fast: first poll `t+1s`, then `5s`
+   - deep: first poll `t+2s`, then `20s` up to deep-average window, then `10s`, then `5s`; transient poll errors use capped exponential backoff
+6. Import selection policy:
+   - fast: import all returned indices
+   - deep: import only `result_type_name=web` and non-empty URL items
+7. Local persistence policy:
+   - store only metadata (`source_id`, title, url, query/report/task status)
+   - do not store source raw content locally
+8. Research source selection UX:
+   - same composer chip area as `@`/`@@` with dedicated non-local icons
+   - loading chips show spinner; `links` shows `%` progress
+   - removing loading chip hides/excludes it from query scope but does not cancel in-flight NotebookLM work
+   - `no_research`/`error` statuses are marked as unusable (error-styled chips)
+9. Query source merge:
+   - final `source_ids` merge now includes active, ready research source IDs along with BM25 + explicit (`@`/`@@`) + history carry-over IDs
+
+---
+
+## 12. Verification
 
 Added/updated tests:
 
 - `test/ui/pathMention.test.ts`
 - `test/ui/slashCommands.test.ts`
+- `test/ui/researchCommands.test.ts`
 - `test/plugin/ExplicitSourceSelectionService.test.ts`
 - `test/plugin/explicitSelectionMerge.test.ts`
 - `test/storage/PluginDataStore.test.ts` (explicit selection normalization)
+- `test/storage/PluginDataStore.test.ts` (research record persistence/reconciliation)
 - `test/plugin/NotebookLMPlugin.sources.test.ts` (non-text extension uploads as `source_type=file`)
 - `test/plugin/historySourceIds.test.ts` (deselected source ID exclusion from carry-over)
+- `test/plugin/researchTracking.test.ts` (deep task-id mutation + polling scheduler behavior)
 - existing source preparation + integration tests remain green.

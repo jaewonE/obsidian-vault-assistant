@@ -82,6 +82,13 @@ test("keeps slash mention active when typing a subcommand", () => {
 	assert.equal(context?.term, "source ad");
 });
 
+test("keeps slash mention active for research deep subcommand", () => {
+	const text = "/research deep 민주주의";
+	const context = getActiveSlashCommandMention(text, text.length);
+	assert.ok(context);
+	assert.equal(context?.term, "research deep 민주주의");
+});
+
 test("composer mention picks nearest active trigger", () => {
 	const text = "@docs/path /se";
 	const context = getActiveComposerMention(text, text.length);

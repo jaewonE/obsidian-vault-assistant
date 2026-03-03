@@ -5,9 +5,11 @@ import type {
 	ConversationQueryMetadata,
 	ComposerSelectionItem,
 	ComposerSelectionUploadStatus,
+	NotebookResearchSourceItem,
 	QueryProgressState,
 	QueryProgressStepState,
 	QuerySourceItem,
+	ResearchOperationView,
 } from "../types";
 import { HistoryModal } from "./HistoryModal";
 import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "./constants";
@@ -20,6 +22,10 @@ import {
 	searchSlashCommandSuggestions,
 	type SlashCommandSuggestion,
 } from "./slashCommands";
+import { parseResearchCommand } from "./researchCommands";
+import { ResearchLinksModal } from "./ResearchLinksModal";
+import { DeepResearchReportModal } from "./DeepResearchReportModal";
+import { openInDefaultBrowser } from "./externalBrowser";
 
 const FILE_EXTENSION_ICON_BY_NAME: Record<string, string> = {
 	md: "file-text",
@@ -150,6 +156,7 @@ export class ChatView extends ItemView {
 	private queryProgress: QueryProgressState | null = null;
 	private unsubscribeProgress: (() => void) | null = null;
 	private unsubscribeExplicitUploadState: (() => void) | null = null;
+	private unsubscribeResearchOperations: (() => void) | null = null;
 	private sourceListExpandedByMessageKey = new Map<string, boolean>();
 	private composerSelections: ComposerSelectionItem[] = [];
 	private excludedSourceIds = new Set<string>();
@@ -191,6 +198,11 @@ export class ChatView extends ItemView {
 		this.unsubscribeExplicitUploadState = this.plugin.onExplicitUploadStateChange(() => {
 			this.renderComposerSelections();
 		});
+		this.unsubscribeResearchOperations?.();
+		this.unsubscribeResearchOperations = this.plugin.onResearchOperationChange(() => {
+			this.renderComposerSelections();
+			this.renderMessages(true);
+		});
 		this.renderLayout();
 		this.renderMessages();
 	}
@@ -200,6 +212,8 @@ export class ChatView extends ItemView {
 		this.unsubscribeProgress = null;
 		this.unsubscribeExplicitUploadState?.();
 		this.unsubscribeExplicitUploadState = null;
+		this.unsubscribeResearchOperations?.();
+		this.unsubscribeResearchOperations = null;
 		this.mentionItemElements = [];
 		this.mentionHoveredIndex = null;
 		this.contentEl.empty();
@@ -686,49 +700,13 @@ export class ChatView extends ItemView {
 		this.composerSelectionsEl.style.display = "flex";
 
 		for (const selection of this.composerSelections) {
-			const chipEl = this.composerSelectionsEl.createDiv({ cls: "nlm-chat-composer-selection" });
-			const uploadStatus = this.plugin.getComposerSelectionUploadStatus(selection);
-			if (uploadStatus.state === "uploading") {
-				chipEl.addClass("nlm-chat-composer-selection-uploading");
-			}
-			const chipDisplayText =
-				selection.kind === "path"
-					? `${getLastPathSegment(selection.path)} (${selection.subfileCount})`
-					: selection.label;
-			const chipTooltipText =
-				selection.kind === "path"
-					? `${selection.path} (${selection.subfileCount})`
-					: selection.path;
-
-			const openButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-open" });
-			openButtonEl.type = "button";
-			openButtonEl.addEventListener("click", () => {
-				void this.plugin.openComposerSelectionInNewTab(selection);
-			});
-			openButtonEl.setAttribute("title", chipTooltipText);
-			openButtonEl.setAttribute("aria-label", chipTooltipText);
-
-			const iconEl = openButtonEl.createSpan({ cls: "nlm-chat-composer-selection-icon" });
-			const extension = selection.kind === "file" ? selection.path.split(".").pop() : undefined;
-			setIcon(
-				iconEl,
-				selection.kind === "path"
-					? "folder"
-					: getFileIconNameByExtension(extension),
-			);
-
-			openButtonEl.createSpan({
-				cls: "nlm-chat-composer-selection-label",
-				text: chipDisplayText,
-			});
-
-			const removeButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-remove" });
-			removeButtonEl.type = "button";
-			removeButtonEl.setAttribute("aria-label", `Remove source: ${selection.label}`);
-			this.renderComposerSelectionRemoveControl(removeButtonEl, uploadStatus);
-			removeButtonEl.addEventListener("click", () => {
-				this.removeComposerSelection(selection);
-			});
+			this.renderLocalComposerSelectionChip(selection);
+		}
+		const researchOperations = this.plugin
+			.getResearchOperations()
+			.filter((operation) => !operation.dismissed);
+		for (const operation of researchOperations) {
+			this.renderResearchComposerSelectionChip(operation);
 		}
 
 		const toggleEl = this.composerSelectionsEl.createDiv({ cls: "nlm-chat-composer-search-toggle" });
@@ -754,12 +732,192 @@ export class ChatView extends ItemView {
 		});
 	}
 
+	private renderLocalComposerSelectionChip(selection: ComposerSelectionItem): void {
+		if (!this.composerSelectionsEl) {
+			return;
+		}
+		const chipEl = this.composerSelectionsEl.createDiv({ cls: "nlm-chat-composer-selection" });
+		const uploadStatus = this.plugin.getComposerSelectionUploadStatus(selection);
+		if (uploadStatus.state === "uploading") {
+			chipEl.addClass("nlm-chat-composer-selection-uploading");
+		}
+		const chipDisplayText =
+			selection.kind === "path"
+				? `${getLastPathSegment(selection.path)} (${selection.subfileCount})`
+				: selection.label;
+		const chipTooltipText =
+			selection.kind === "path"
+				? `${selection.path} (${selection.subfileCount})`
+				: selection.path;
+
+		const openButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-open" });
+		openButtonEl.type = "button";
+		openButtonEl.addEventListener("click", () => {
+			void this.plugin.openComposerSelectionInNewTab(selection);
+		});
+		openButtonEl.setAttribute("title", chipTooltipText);
+		openButtonEl.setAttribute("aria-label", chipTooltipText);
+
+		const iconEl = openButtonEl.createSpan({ cls: "nlm-chat-composer-selection-icon" });
+		const extension = selection.kind === "file" ? selection.path.split(".").pop() : undefined;
+		setIcon(
+			iconEl,
+			selection.kind === "path"
+				? "folder"
+				: getFileIconNameByExtension(extension),
+		);
+
+		openButtonEl.createSpan({
+			cls: "nlm-chat-composer-selection-label",
+			text: chipDisplayText,
+		});
+
+		const removeButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-remove" });
+		removeButtonEl.type = "button";
+		removeButtonEl.setAttribute("aria-label", `Remove source: ${selection.label}`);
+		this.renderComposerSelectionRemoveControl(removeButtonEl, uploadStatus);
+		removeButtonEl.addEventListener("click", () => {
+			this.removeComposerSelection(selection);
+		});
+	}
+
+	private renderResearchComposerSelectionChip(operation: ResearchOperationView): void {
+		if (!this.composerSelectionsEl) {
+			return;
+		}
+		const chipEl = this.composerSelectionsEl.createDiv({
+			cls: "nlm-chat-composer-selection nlm-chat-composer-selection-research",
+		});
+		const uploadStatus = this.getResearchUploadStatus(operation);
+		if (uploadStatus.state === "uploading") {
+			chipEl.addClass("nlm-chat-composer-selection-uploading");
+		}
+		if (operation.status === "error" || operation.status === "no_research") {
+			chipEl.addClass("nlm-chat-composer-selection-research-error");
+		}
+
+		const openButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-open" });
+		openButtonEl.type = "button";
+		const chipTooltipText = this.getResearchChipTooltip(operation);
+		openButtonEl.setAttribute("title", chipTooltipText);
+		openButtonEl.setAttribute("aria-label", chipTooltipText);
+		openButtonEl.addEventListener("click", () => {
+			void this.handleOpenResearchOperation(operation);
+		});
+
+		const iconEl = openButtonEl.createSpan({ cls: "nlm-chat-composer-selection-icon" });
+		setIcon(iconEl, this.getResearchOperationIconName(operation));
+		openButtonEl.createSpan({
+			cls: "nlm-chat-composer-selection-label",
+			text: this.getResearchChipDisplayText(operation),
+		});
+
+		const removeButtonEl = chipEl.createEl("button", { cls: "nlm-chat-composer-selection-remove" });
+		removeButtonEl.type = "button";
+		removeButtonEl.setAttribute("aria-label", `Remove source: ${this.getResearchChipDisplayText(operation)}`);
+		this.renderComposerSelectionRemoveControl(removeButtonEl, uploadStatus);
+		removeButtonEl.addEventListener("click", () => {
+			this.plugin.dismissResearchOperation(operation.id);
+		});
+	}
+
 	private removeComposerSelection(selection: ComposerSelectionItem): void {
 		this.plugin.cancelExplicitSourceUploads(selection.filePaths);
 		const nextSelections = this.composerSelections.filter((item) => item.id !== selection.id);
 		this.excludeDeselectedSelection(selection, nextSelections);
 		this.composerSelections = nextSelections;
 		this.renderComposerSelections();
+	}
+
+	private getResearchUploadStatus(operation: ResearchOperationView): ComposerSelectionUploadStatus {
+		if (operation.status !== "loading") {
+			return {
+				state: "complete",
+				total: Math.max(1, operation.progress.total),
+				completed: Math.max(0, operation.progress.completed),
+				percent: 100,
+			};
+		}
+		const total = Math.max(1, operation.progress.total);
+		const completed = Math.max(0, Math.min(total, operation.progress.completed));
+		const percent = Math.max(0, Math.min(100, operation.progress.percent));
+		return {
+			state: "uploading",
+			total,
+			completed,
+			percent,
+		};
+	}
+
+	private getResearchOperationIconName(operation: ResearchOperationView): string {
+		if (operation.kind === "link") {
+			return operation.linkKind === "youtube" ? "youtube" : "globe";
+		}
+		if (operation.kind === "links") {
+			return "link-2";
+		}
+		if (operation.kind === "research-fast") {
+			return "search";
+		}
+		return "book-open";
+	}
+
+	private getResearchChipDisplayText(operation: ResearchOperationView): string {
+		if (operation.kind === "link") {
+			return operation.sourceItems[0]?.title || operation.links[0] || operation.query;
+		}
+		if (operation.kind === "links") {
+			const primary = operation.sourceItems[0]?.title || operation.links[0] || operation.query;
+			const count =
+				operation.status === "loading"
+					? Math.max(0, operation.progress.total)
+					: operation.sourceItems.length;
+			return `${primary} (${count})`;
+		}
+		const count = operation.status === "loading" ? 0 : operation.sourceItems.length;
+		return `${operation.query} (${count})`;
+	}
+
+	private getResearchChipTooltip(operation: ResearchOperationView): string {
+		if (operation.kind === "link") {
+			return operation.links[0] || operation.query;
+		}
+		if (operation.kind === "links") {
+			return operation.links.join("\n") || operation.query;
+		}
+		return operation.query;
+	}
+
+	private async handleOpenResearchOperation(operation: ResearchOperationView): Promise<void> {
+		if (operation.status === "loading") {
+			return;
+		}
+		if (operation.kind === "link") {
+			const url = operation.sourceItems[0]?.url || operation.links[0];
+			if (!url) {
+				return;
+			}
+			openInDefaultBrowser(url);
+			return;
+		}
+		if (operation.kind === "links" || operation.kind === "research-fast") {
+			const items = await this.buildResearchLinksModalItems(operation.sourceItems, operation.links);
+			if (items.length === 0) {
+				return;
+			}
+			const modal = new ResearchLinksModal(this.app, {
+				title: operation.kind === "links" ? "Select a link to open" : "Select a research source to open",
+				items,
+			});
+			modal.open();
+			return;
+		}
+		const report = operation.report ?? this.plugin.getResearchRecordById(operation.recordId)?.report ?? "";
+		const modal = new DeepResearchReportModal(this.app, {
+			title: "Deep research report",
+			report,
+		});
+		modal.open();
 	}
 
 	private renderComposerSelectionRemoveControl(
@@ -867,14 +1025,29 @@ export class ChatView extends ItemView {
 			return;
 		}
 
-		const query = this.inputEl.value.trim();
+		const rawQuery = this.inputEl.value;
+		const query = rawQuery.trim();
 		if (!query) {
+			return;
+		}
+		const parsedCommand = parseResearchCommand(query);
+		if (parsedCommand.kind !== "none") {
+			if (parsedCommand.kind === "invalid") {
+				new Notice(parsedCommand.error);
+				return;
+			}
+			this.inputEl.value = "";
+			this.clearMentionPanel();
+			this.plugin.executeResearchCommand(parsedCommand);
+			this.renderComposerSelections();
+			this.inputEl.focus();
 			return;
 		}
 		const explicitSelections = [...this.composerSelections];
 		const includeBm25Search = this.plugin.getSearchVaultEnabled();
 		const excludedSourceIds = [...this.excludedSourceIds];
 		const excludedPaths = [...this.excludedPaths];
+		const manualSourceIds = this.plugin.getActiveResearchSourceIds();
 
 		this.inputEl.value = "";
 		this.clearMentionPanel();
@@ -886,6 +1059,7 @@ export class ChatView extends ItemView {
 				includeBm25Search,
 				excludedSourceIds,
 				excludedPaths,
+				manualSourceIds,
 			});
 			this.renderMessages();
 			await runPromise;
@@ -943,6 +1117,7 @@ export class ChatView extends ItemView {
 		this.composerSelections = [];
 		this.excludedSourceIds.clear();
 		this.excludedPaths.clear();
+		this.plugin.clearResearchComposerOperations();
 	}
 
 	private clearExclusionsForSelection(selection: ComposerSelectionItem): void {
@@ -1062,8 +1237,103 @@ export class ChatView extends ItemView {
 		});
 		sourceButtonEl.type = "button";
 		sourceButtonEl.addEventListener("click", () => {
-			void this.plugin.openSourceInNewTab(sourceItem.path);
+			if (sourceItem.kind === "local") {
+				void this.plugin.openSourceInNewTab(sourceItem.path);
+				return;
+			}
+			void this.openResearchSourceItem(sourceItem);
 		});
+	}
+
+	private async openResearchSourceItem(sourceItem: QuerySourceItem): Promise<void> {
+		if (!sourceItem.researchRecordId) {
+			return;
+		}
+		const record = this.plugin.getResearchRecordById(sourceItem.researchRecordId);
+		if (!record || record.status !== "ready") {
+			return;
+		}
+
+		if (record.kind === "link") {
+			const url = record.sourceItems[0]?.url || record.links[0];
+			if (!url) {
+				return;
+			}
+			openInDefaultBrowser(url);
+			return;
+		}
+
+		if (record.kind === "links" || record.kind === "research-fast") {
+			const items = await this.buildResearchLinksModalItems(record.sourceItems, record.links);
+			const modal = new ResearchLinksModal(this.app, {
+				title: record.kind === "links" ? "Select a link to open" : "Select a research source to open",
+				items,
+			});
+			modal.open();
+			return;
+		}
+
+		const modal = new DeepResearchReportModal(this.app, {
+			title: "Deep research report",
+			report: record.report ?? "",
+		});
+		modal.open();
+	}
+
+	private async buildResearchLinksModalItems(
+		sourceItems: NotebookResearchSourceItem[],
+		links: string[],
+	): Promise<
+		Array<{
+			sourceId?: string;
+			title: string;
+			url: string;
+			fetchFailed: boolean;
+		}>
+	> {
+		const linkItems = sourceItems
+			.filter((item) => typeof item.url === "string" && item.url.trim().length > 0)
+			.map((item) => ({
+				sourceId: item.sourceId || undefined,
+				title: item.title || (item.url as string),
+				url: (item.url as string).trim(),
+				fetchFailed: false,
+			}));
+		const includedLinks = links
+			.filter((url) => typeof url === "string" && url.trim().length > 0)
+			.map((url) => url.trim());
+		const seenUrls = new Set(linkItems.map((item) => item.url));
+		for (const url of includedLinks) {
+			if (seenUrls.has(url)) {
+				continue;
+			}
+			seenUrls.add(url);
+			linkItems.push({
+				sourceId: undefined,
+				title: url,
+				url,
+				fetchFailed: true,
+			});
+		}
+		if (linkItems.length === 0) {
+			return [];
+		}
+
+		let fetchability: Record<string, boolean> = {};
+		try {
+			const sourceIds = linkItems
+				.map((item) => item.sourceId)
+				.filter((value): value is string => typeof value === "string" && value.length > 0);
+			fetchability = await this.plugin.getResearchSourceFetchability(
+				sourceIds,
+			);
+		} catch {
+			// If availability probing fails, still show links and keep navigation available.
+		}
+		return linkItems.map((item) => ({
+			...item,
+			fetchFailed: item.sourceId ? fetchability[item.sourceId] === false : item.fetchFailed,
+		}));
 	}
 
 	private renderProgressPanel(containerEl: HTMLDivElement, progress: QueryProgressState): void {
