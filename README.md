@@ -1,6 +1,6 @@
 # Obsidian Vault Assistant
 
-Version: `0.6.0`
+Version: `0.6.1`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -169,21 +169,21 @@ npm test
 
 ## Repository structure
 
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/main.ts`: minimal entrypoint
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/NotebookLMPlugin.ts`: plugin lifecycle + orchestration
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` search and path expansion logic
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/SourcePreparationService.ts`: source upload/reuse/replace/eviction algorithm service
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/plugin/historySourceIds.ts`: bounded history source carry-over logic
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/search/BM25.ts`: BM25 indexing/search logic
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/storage/PluginDataStore.ts`: persisted settings/history/source registry
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/src/ui/`: chat view, mention parser, history modal, settings tab
+- `src/main.ts`: minimal entrypoint
+- `src/plugin/NotebookLMPlugin.ts`: plugin lifecycle + orchestration
+- `src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` search and path expansion logic
+- `src/plugin/SourcePreparationService.ts`: source upload/reuse/replace/eviction algorithm service
+- `src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
+- `src/plugin/historySourceIds.ts`: bounded history source carry-over logic
+- `src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
+- `src/search/BM25.ts`: BM25 indexing/search logic
+- `src/storage/PluginDataStore.ts`: persisted settings/history/source registry
+- `src/ui/`: chat view, mention parser, history modal, settings tab
 
 ## Algorithm documentation
 
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_ALGORITHMS_0.4.0.md`
-- `/Users/jaewone/developer/utils/obsidian/current_using/obsidian-vault-assistant/BM25_NOTEBOOKLM_PIPELINE_0.4.0.md`
+- `Docs/BM25_NOTEBOOKLM_ALGORITHMS_0.4.0.md`
+- `Docs/BM25_NOTEBOOKLM_PIPELINE_0.4.0.md`
 
 ## Troubleshooting
 
