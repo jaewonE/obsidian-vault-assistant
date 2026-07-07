@@ -996,10 +996,7 @@ export class ChatView extends ItemView {
 			} else {
 				messageEl.createDiv({ cls: "nlm-chat-message-body", text: message.text });
 			}
-			messageEl.createDiv({
-				cls: "nlm-chat-message-time",
-				text: new Date(message.at).toLocaleTimeString(),
-			});
+			this.renderMessageMeta(messageEl, message.role, message.text, message.at);
 		}
 
 		if (renderVersion !== this.renderVersion || this.messageListEl !== messageListEl) {
@@ -1018,6 +1015,42 @@ export class ChatView extends ItemView {
 		}
 
 		messageListEl.scrollTop = messageListEl.scrollHeight;
+	}
+
+	private renderMessageMeta(
+		messageEl: HTMLDivElement,
+		role: "user" | "assistant",
+		text: string,
+		timestamp: string,
+	): void {
+		const metaEl = messageEl.createDiv({ cls: "nlm-chat-message-meta" });
+		const copyButtonEl = metaEl.createEl("button", {
+			cls: "nlm-chat-message-copy",
+			attr: {
+				"aria-label": role === "user" ? "Copy question" : "Copy answer",
+				title: role === "user" ? "Copy question" : "Copy answer",
+				type: "button",
+			},
+		});
+		setIcon(copyButtonEl, "copy");
+		copyButtonEl.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			void this.copyMessageText(text, role);
+		});
+		metaEl.createDiv({
+			cls: "nlm-chat-message-time",
+			text: new Date(timestamp).toLocaleTimeString(),
+		});
+	}
+
+	private async copyMessageText(text: string, role: "user" | "assistant"): Promise<void> {
+		try {
+			await navigator.clipboard.writeText(text);
+			new Notice(role === "user" ? "Question copied." : "Answer copied.");
+		} catch (error) {
+			new Notice(`Failed to copy message: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	private async sendMessage(): Promise<void> {

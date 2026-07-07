@@ -1,8 +1,8 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.6.0)
+# BM25 + NotebookLM Algorithms and Implementation (v0.6.1)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.6.0` for:
+This document specifies the production algorithms used in `v0.6.1` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
 2. New explicit source selection pipeline via composer `@` / `@@`.
@@ -11,11 +11,11 @@ This document specifies the production algorithms used in `v0.6.0` for:
 5. Slash command and subcommand autocomplete in composer (`/source`, `/create`, `/setting`, `/research`, `/source add`, `/source get`, `/research links`, `/research deep`).
 6. NotebookLM-only `/research` source lifecycle (link, links, fast, deep) with non-local chip UX and query-source merging.
 
-`v0.6.0` keeps BM25 scoring/indexing behavior unchanged, preserves explicit-source pre-upload behavior from `v0.4.4`, and adds executable `/research` command behavior plus NotebookLM-only research source tracking.
+`v0.6.1` keeps BM25 scoring/indexing behavior unchanged and preserves the `v0.6.0` research behavior, while treating NotebookLM `NOT_FOUND`/404 responses for persisted notebook IDs as recoverable readiness misses that create and persist a replacement notebook.
 
 ---
 
-## 2. Runtime architecture (v0.6.0)
+## 2. Runtime architecture (v0.6.1)
 
 Main components:
 

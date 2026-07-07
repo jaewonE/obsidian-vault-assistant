@@ -1,6 +1,8 @@
 # Obsidian Vault Assistant
 
-Version: `0.6.1`
+[ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
+
+Version: `0.7.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -19,6 +21,7 @@ The plugin provides a right-sidebar chat workflow:
 
 - Right sidebar chat view (single-tab operation)
 - User questions in bubbles, NotebookLM answers rendered as markdown
+- Copy icons on each question and answer copy the original message text to the clipboard.
 - Live 3-step progress UI (search -> upload -> response)
 - During query processing, composer interactions stay enabled (input, mention search, chip actions, `Search vault` toggle); only `Send`, `New`, and `History` are disabled.
 - Step 2 upload progress is synchronized with explicit pre-upload state (for example, `2/5` can be shown if Submit is pressed during the 3rd upload).
@@ -91,6 +94,7 @@ The plugin provides a right-sidebar chat workflow:
   - `notebook_query` tool argument timeout
   - MCP request timeout for NotebookLM calls (with a small buffer)
 - Timeout handling is applied to query, source upload/replacement flow, and startup notebook readiness calls.
+- If the stored NotebookLM notebook ID no longer exists, readiness creates and saves a replacement notebook.
 
 ## Requirements
 
@@ -155,6 +159,12 @@ npm test
 9. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
 10. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
+## Commands and Hotkeys
+
+- `Open NotebookLM chat`
+
+No default hotkeys are assigned. Users can assign shortcuts in Obsidian **Settings -> Hotkeys**.
+
 ## Settings
 
 - `Debug mode`
@@ -166,6 +176,17 @@ npm test
   - `k1`
   - `b`
 - `Query timeout (seconds)` (default `300`)
+
+## Privacy and Network Access
+
+- This plugin uses network access through locally installed `notebooklm-mcp-cli` and Google NotebookLM.
+- It does not read files outside the current vault.
+- Settings, conversation history, and source metadata are stored in the plugin's Obsidian `data.json`.
+- Raw research source content is not stored locally unless explicitly fetched later.
+
+## Desktop support
+
+This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` executables and the NotebookLM desktop integration flow.
 
 ## Repository structure
 
@@ -182,8 +203,8 @@ npm test
 
 ## Algorithm documentation
 
-- `Docs/BM25_NOTEBOOKLM_ALGORITHMS_0.4.0.md`
-- `Docs/BM25_NOTEBOOKLM_PIPELINE_0.4.0.md`
+- `Docs/BM25_NOTEBOOKLM_ALGORITHMS.md`
+- `Docs/BM25_NOTEBOOKLM_PIPELINE.md`
 
 ## Troubleshooting
 
@@ -206,3 +227,7 @@ General diagnostics:
 ```bash
 nlm doctor --verbose
 ```
+
+## License
+
+0-BSD

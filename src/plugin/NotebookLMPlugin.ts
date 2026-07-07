@@ -43,6 +43,7 @@ import { NOTEBOOKLM_CHAT_VIEW_TYPE } from "../ui/constants";
 import { NotebookLMSettingTab } from "../ui/SettingsTab";
 import { buildResearchTrackingQuery } from "./researchQuery";
 import { getResearchImportIndices, trackResearchStatus } from "./researchTracking";
+import { isNotebookMissingError } from "./notebookErrors";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -1253,10 +1254,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 					await this.store.save();
 					return notebookId;
 			} catch (error) {
-				const message = getErrorMessage(error).toLowerCase();
-				if (!message.includes("not found") && !message.includes("404") && !message.includes("missing")) {
+				if (!isNotebookMissingError(error)) {
 					throw error;
 				}
+				this.logger.warn("Stored NotebookLM notebook was not found; creating a new notebook", {
+					notebookId,
+					error: getErrorMessage(error),
+				});
 			}
 		}
 

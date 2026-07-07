@@ -11,7 +11,9 @@ interface SlashCommandDefinition {
 }
 
 const COMMAND_DEFINITIONS: SlashCommandDefinition[] = [
+	{ command: "source", subcommands: ["add", "get"] },
 	{ command: "create", subcommands: [] },
+	{ command: "setting", subcommands: [] },
 	{ command: "research", subcommands: ["links", "deep"] },
 ];
 

@@ -1,8 +1,8 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.6.0)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.6.1)
 
 ## 1. Scope
 
-This document defines the `v0.6.0` end-to-end behavior for:
+This document defines the `v0.6.1` end-to-end behavior for:
 
 1. Existing BM25 + explicit `@`/`@@` source selection.
 2. Slash command autocomplete (`/source`, `/create`, `/setting`, `/research`).
@@ -23,7 +23,7 @@ This document defines the `v0.6.0` end-to-end behavior for:
    - `research-deep`
    - `invalid`
 6. Background research operation is created and shown as a non-local composer chip.
-7. Notebook readiness is ensured (`notebook_id` + source reconciliation).
+7. Notebook readiness is ensured (`notebook_id` + source reconciliation). If a persisted notebook ID returns a NotebookLM missing/not-found response, a replacement notebook is created and persisted.
 8. Operation execution:
    - `link`: `source_add(wait=true)` for one URL using `source_type=url` (applies to both normal web and YouTube URLs).
    - `links`: sequential `source_add(wait=true)` over all URLs with progress `%`.
@@ -50,6 +50,7 @@ This document defines the `v0.6.0` end-to-end behavior for:
 | `/research` root command and subcommands are suggested in slash autocomplete | `src/ui/slashCommands.ts`, `test/ui/slashCommands.test.ts`, `test/ui/pathMention.test.ts` |
 | `/research` parser classifies `link`, `links`, `research-fast`, `research-deep`, `invalid` | `src/ui/researchCommands.ts`, `test/ui/researchCommands.test.ts` |
 | `/research <single-http-url>` is treated as direct link source add | `ChatView.sendMessage` -> `NotebookLMPlugin.executeResearchCommand` -> `runSingleLinkResearchOperation` |
+| Missing persisted NotebookLM notebooks are recreated during readiness checks | `NotebookLMPlugin.ensureNotebookReady` + `src/plugin/notebookErrors.ts` + `test/plugin/NotebookLMPlugin.notebookReady.test.ts` |
 | `/research <non-url>` is treated as fast research query | `src/ui/researchCommands.ts` (`research-fast`) + `NotebookLMPlugin.runFastOrDeepResearchOperation(mode=fast)` |
 | `/research links <url...>` adds links sequentially | `NotebookLMPlugin.runMultiLinkResearchOperation` |
 | URL add uses `source_type=url` for both normal links and YouTube links | `NotebookLMPlugin.addLinkSourceToNotebook` |

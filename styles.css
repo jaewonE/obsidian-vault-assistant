@@ -138,7 +138,7 @@
 	white-space: pre-wrap;
 }
 
-.nlm-chat-user .nlm-chat-message-time {
+.nlm-chat-user .nlm-chat-message-meta {
 	align-self: flex-end;
 }
 
@@ -221,6 +221,46 @@
 
 .nlm-chat-message-markdown thead th {
 	background: var(--background-secondary);
+}
+
+.nlm-chat-message-meta {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-muted);
+}
+
+.nlm-chat-message-copy {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0.75;
+}
+
+.nlm-chat-message-copy:hover,
+.nlm-chat-message-copy:focus-visible {
+	background: var(--background-modifier-hover);
+	color: var(--text-accent);
+	opacity: 1;
+}
+
+.nlm-chat-user .nlm-chat-message-meta,
+.nlm-chat-user .nlm-chat-message-copy {
+	color: var(--text-on-accent);
+}
+
+.nlm-chat-user .nlm-chat-message-copy:hover,
+.nlm-chat-user .nlm-chat-message-copy:focus-visible {
+	background: rgba(255, 255, 255, 0.18);
+	color: var(--text-on-accent);
 }
 
 .nlm-chat-message-time {

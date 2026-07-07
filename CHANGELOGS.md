@@ -2,6 +2,28 @@
 
 All notable repository changes are documented here.
 
+## [0.7.0] - 2026-07-08
+
+### Added
+
+- Added copy icons to every user question and NotebookLM answer in the chat view, copying the original message text to the clipboard.
+- Added Korean README documentation and bilingual README navigation.
+
+### Changed
+
+- Updated release metadata, documentation, and vault-install artifacts for the 0.7.0 GitHub publication.
+
+### Fixed
+
+- Restored `/source`, `/setting`, and `/source add` / `/source get` slash command autocomplete entries to match the documented composer command list.
+
+## [0.6.1] - 2026-07-03
+
+### Fixed
+
+- Recreated the plugin notebook when a persisted NotebookLM notebook ID returns `NOT_FOUND`/404 during readiness checks, including **Refresh auth** verification.
+- Added a regression test for NotebookLM missing-notebook error classification.
+
 ## [0.6.0] - 2026-03-03
 
 ### Added
