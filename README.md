@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.7.0`
+Version: `0.8.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -12,7 +12,7 @@ Obsidian Desktop community plugin that integrates with Google NotebookLM through
 The plugin provides a right-sidebar chat workflow:
 
 1. Optional BM25 search over vault notes
-2. Optional explicit source selection via `@` / `@@`
+2. Optional explicit source selection via `@` / `@@` / `$`
 3. Source preparation and upload/reuse in NotebookLM
 4. NotebookLM query with bounded source scope
 5. Persisted conversation/source metadata for follow-up reuse
@@ -32,6 +32,13 @@ The plugin provides a right-sidebar chat workflow:
   - keyboard and mouse selection support (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`)
   - supports search terms with spaces and underscore-to-space matching
   - selected files/paths start sequential source upload immediately after selection
+- Hierarchical markdown selection in composer:
+  - type `$` to search the same markdown documents shown by `@`
+  - selecting a document adds that document and every descendant whose configured YAML property links to it, level by level
+  - YAML values may be a wikilink string or list, such as `parents: ["[[Kafka]]"]`; documents without frontmatter or the configured property are ignored
+  - cycles and duplicate links are guarded so each document is added once
+  - the configured document limit includes the selected document; `-1` includes every descendant
+  - `$` does not create a selection while the YAML property setting is blank or the selected document lacks that property
 - Slash command autocomplete in composer:
   - type `/` to show available root commands (`/source`, `/create`, `/setting`, `/research`)
   - root command list is filtered by typed text (for example `/s`)
@@ -46,7 +53,7 @@ The plugin provides a right-sidebar chat workflow:
   - `/research <query>`: run NotebookLM fast research, import discovered web sources, and keep source IDs for follow-up query scope
   - `/research deep <query>`: run NotebookLM deep research with mutable `task_id` tracking (`task_id` + `query` polling), import eligible web sources, and store deep report markdown for modal viewing
   - all `/research` sources are stored as NotebookLM metadata only (source IDs, titles, urls, query/report metadata). Raw source content remains in NotebookLM unless explicitly fetched later.
-- Research chips in composer (same chip area as `@` / `@@`):
+- Research chips in composer (same chip area as `@` / `@@` / `$`):
   - dedicated non-local icons for link(url), link(youtube), links, research fast, research deep
   - loading spinner for all research types, with `%` progress center for `links`
   - hover-to-show `x` remove behavior; removing a loading research chip excludes it from query scope/UI but does not cancel the underlying NotebookLM operation
@@ -66,7 +73,7 @@ The plugin provides a right-sidebar chat workflow:
   - file/path chips are clickable
   - path chips show only the last folder name and include descendant file count (for example `topic (4)`)
   - hovering a chip shows full source text in a small tooltip (`title`) so truncated names can be read fully
-  - explicit `@` / `@@` chips remain visible across follow-up questions in the same tab
+  - explicit `@` / `@@` / `$` chips remain visible across follow-up questions in the same tab
   - during explicit background upload, each chip shows a circular loading indicator in place of `x`
   - hovering an uploading chip switches the indicator to `x` so removal is still immediate
   - for multi-file selections (for example folder selections), loading indicator center text shows upload completion percentage
@@ -153,7 +160,7 @@ npm test
 3. Enable the plugin at **Settings -> Community plugins**.
 4. Run command: `Open NotebookLM chat`.
 5. Ask questions in the right sidebar chat view.
-6. Optionally add explicit sources via `@` / `@@` before sending.
+6. Optionally add explicit sources via `@` / `@@`, or add a YAML-linked document subtree via `$`, before sending.
 7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, `/research`, and supported subcommands).
 8. Run `/research` commands from the same composer to prepare NotebookLM-only sources without adding chat history messages.
 9. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
@@ -169,6 +176,10 @@ No default hotkeys are assigned. Users can assign shortcuts in Obsidian **Settin
 
 - `Debug mode`
 - `Refresh Auth`
+- Hierarchical source selection:
+  - `Enable $ hierarchical selection` (default: enabled)
+  - `YAML parent property` (default: blank; one word only). On completion, extra words are removed and a warning is shown.
+  - `Hierarchical document limit` (default: `-1`). The limit counts the selected document and descendants; `-1` includes all descendants.
 - BM25 parameters:
   - `Top N`
   - `cutoff ratio`
@@ -192,7 +203,8 @@ This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` exe
 
 - `src/main.ts`: minimal entrypoint
 - `src/plugin/NotebookLMPlugin.ts`: plugin lifecycle + orchestration
-- `src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` search and path expansion logic
+- `src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` / `$` search and selection logic
+- `src/plugin/hierarchicalSelection.ts`: YAML parent-link graph expansion with cycle and limit handling
 - `src/plugin/SourcePreparationService.ts`: source upload/reuse/replace/eviction algorithm service
 - `src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
 - `src/plugin/historySourceIds.ts`: bounded history source carry-over logic

@@ -1,10 +1,10 @@
-# BM25 + NotebookLM Pipeline Requirements Traceability (v0.6.1)
+# BM25 + NotebookLM Pipeline Requirements Traceability (v0.8.0)
 
 ## 1. Scope
 
-This document defines the `v0.6.1` end-to-end behavior for:
+This document defines the `v0.8.0` end-to-end behavior for:
 
-1. Existing BM25 + explicit `@`/`@@` source selection.
+1. Existing BM25 + explicit `@`/`@@` source selection and YAML-linked `$` hierarchy selection.
 2. Slash command autocomplete (`/source`, `/create`, `/setting`, `/research`).
 3. Executable `/research` command flows (`link`, `links`, `research-fast`, `research-deep`).
 4. NotebookLM-only research source lifecycle (metadata-only local persistence, no raw source body persistence).
@@ -13,7 +13,7 @@ This document defines the `v0.6.1` end-to-end behavior for:
 ## 2. Pipeline stages
 
 1. User edits composer text.
-2. Mention parser resolves active token type: `@`, `@@`, `/`, or none.
+2. Mention parser resolves active token type: `@`, `@@`, enabled `$`, `/`, or none.
 3. Slash suggestions are shown and autocompleted as needed.
 4. If send input is `/research ...`, normal chat send is skipped (no user/assistant history message append).
 5. `/research` input is parsed into one of:
@@ -47,6 +47,10 @@ This document defines the `v0.6.1` end-to-end behavior for:
 
 | Requirement | Implementation |
 | --- | --- |
+| `$` shows markdown document candidates only when enabled | `src/ui/pathMention.ts`, `ExplicitSourceSelectionService.search`, `test/ui/pathMention.test.ts` |
+| `$` includes the selected document and YAML-linked descendants | `src/plugin/hierarchicalSelection.ts`, `ExplicitSourceSelectionService.resolveSelection`, `test/plugin/hierarchicalSelection.test.ts` |
+| Missing frontmatter/property prevents hierarchy selection | `resolveHierarchicalMarkdownPaths`, `test/plugin/hierarchicalSelection.test.ts` |
+| Hierarchy settings persist with defaults `true`, blank, and `-1` | `src/types.ts`, `src/storage/PluginDataStore.ts`, `src/ui/SettingsTab.ts` |
 | `/research` root command and subcommands are suggested in slash autocomplete | `src/ui/slashCommands.ts`, `test/ui/slashCommands.test.ts`, `test/ui/pathMention.test.ts` |
 | `/research` parser classifies `link`, `links`, `research-fast`, `research-deep`, `invalid` | `src/ui/researchCommands.ts`, `test/ui/researchCommands.test.ts` |
 | `/research <single-http-url>` is treated as direct link source add | `ChatView.sendMessage` -> `NotebookLMPlugin.executeResearchCommand` -> `runSingleLinkResearchOperation` |

@@ -1,5 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type NotebookLMPlugin from "../main";
+import { normalizeYamlPropertyKey } from "./settingValidation";
 
 export class NotebookLMSettingTab extends PluginSettingTab {
 	private readonly plugin: NotebookLMPlugin;
@@ -23,6 +24,67 @@ export class NotebookLMSettingTab extends PluginSettingTab {
 					await this.plugin.setDebugMode(value);
 				}),
 			);
+
+		new Setting(containerEl)
+			.setName("Hierarchical source selection")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Enable $ hierarchical selection")
+			.setDesc("Show Markdown files when $ is typed and add the selected file with descendants linked through the configured parent property.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.hierarchicalSelectionEnabled)
+					.onChange(async (value) => {
+						await this.plugin.updateSetting("hierarchicalSelectionEnabled", value);
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("YAML parent property")
+			.setDesc("One-word property used to link each child document to its parent. Leave blank to prevent $ selections from being added.")
+			.addText((text) => {
+				text.inputEl.placeholder = "Parents";
+				text.setValue(this.plugin.settings.hierarchicalParentProperty);
+
+				const commit = async (): Promise<void> => {
+					const normalized = normalizeYamlPropertyKey(text.getValue());
+					text.setValue(normalized.value);
+					await this.plugin.updateSetting("hierarchicalParentProperty", normalized.value);
+					if (normalized.discardedExtraWords) {
+						new Notice("YAML parent property must be one word. Extra words were removed.");
+					}
+				};
+
+				text.inputEl.addEventListener("blur", () => {
+					void commit();
+				});
+				text.inputEl.addEventListener("keydown", (event) => {
+					if (event.key !== "Enter") {
+						return;
+					}
+					event.preventDefault();
+					void commit();
+					text.inputEl.blur();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Hierarchical document limit")
+			.setDesc("Maximum total Markdown documents added by one $ selection, including the selected document. Use -1 to include every descendant.")
+			.addText((text) => {
+				text.inputEl.type = "number";
+				text.inputEl.min = "-1";
+				text.inputEl.step = "1";
+				text.setValue(String(this.plugin.settings.hierarchicalSelectionLimit));
+				text.onChange(async (rawValue) => {
+					const parsed = Number(rawValue);
+					if (!Number.isInteger(parsed) || (parsed !== -1 && parsed < 1)) {
+						return;
+					}
+					await this.plugin.updateNumericSetting("hierarchicalSelectionLimit", parsed);
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Refresh auth")

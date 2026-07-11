@@ -90,7 +90,12 @@ type NumericSettingKey =
 	| "bm25MinSourcesK"
 	| "bm25k1"
 	| "bm25b"
-	| "queryTimeoutSeconds";
+	| "queryTimeoutSeconds"
+	| "hierarchicalSelectionLimit";
+
+type DirectSettingKey =
+	| "hierarchicalSelectionEnabled"
+	| "hierarchicalParentProperty";
 
 const NOTEBOOK_TITLE = "Obsidian Vault Notebook";
 const PROTECTED_CAPACITY_RATIO = 0.7;
@@ -637,7 +642,11 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		path: string;
 		mode: AddFilePathMode;
 	}): ResolveComposerSelectionResult {
-		return this.explicitSourceSelectionService.resolveSelection(params);
+		return this.explicitSourceSelectionService.resolveSelection({
+			...params,
+			hierarchicalParentProperty: this.settings.hierarchicalParentProperty,
+			hierarchicalSelectionLimit: this.settings.hierarchicalSelectionLimit,
+		});
 	}
 
 	async openComposerSelectionInNewTab(selection: ComposerSelectionItem): Promise<void> {
@@ -1188,6 +1197,14 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		await this.store.save();
 	}
 
+	async updateSetting(
+		key: DirectSettingKey,
+		value: NotebookLMPluginSettings[DirectSettingKey],
+	): Promise<void> {
+		this.store.updateSettings({ [key]: value });
+		await this.store.save();
+	}
+
 	private setQueryProgress(progress: QueryProgressState | null): void {
 		this.queryProgress = progress;
 		for (const listener of this.queryProgressListeners) {
@@ -1633,7 +1650,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				continue;
 			}
 
-			const key = `${selection.kind}:${selection.path}`;
+			const key = `${selection.kind}:${selection.mode}:${selection.path}`;
 			if (seenSelectionKeys.has(key)) {
 				continue;
 			}
@@ -1642,7 +1659,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			normalized.push({
 				...selection,
 				filePaths,
-				subfileCount: selection.kind === "path" ? Math.max(1, selection.subfileCount) : 1,
+				subfileCount:
+					selection.kind === "path" || selection.mode === "hierarchy"
+						? Math.max(1, filePaths.length)
+						: 1,
 			});
 		}
 

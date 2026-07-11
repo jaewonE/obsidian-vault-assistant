@@ -66,7 +66,7 @@ export type ResearchCommandParseResult =
 			query: string;
 	  };
 
-export type AddFilePathMode = "markdown" | "all";
+export type AddFilePathMode = "markdown" | "all" | "hierarchy";
 
 export type AddFilePathSelectionKind = "file" | "path";
 
@@ -205,6 +205,9 @@ export interface NotebookLMPluginSettings {
 	bm25b: number;
 	queryTimeoutSeconds: number;
 	searchWithExplicitSelections: boolean;
+	hierarchicalSelectionEnabled: boolean;
+	hierarchicalParentProperty: string;
+	hierarchicalSelectionLimit: number;
 }
 
 export interface NotebookLMPluginData {
@@ -283,6 +286,9 @@ export const DEFAULT_SETTINGS: NotebookLMPluginSettings = {
 	bm25b: 0.75,
 	queryTimeoutSeconds: 300,
 	searchWithExplicitSelections: true,
+	hierarchicalSelectionEnabled: true,
+	hierarchicalParentProperty: "",
+	hierarchicalSelectionLimit: -1,
 };
 
 export const DEFAULT_SOURCE_REGISTRY: SourceRegistryState = {

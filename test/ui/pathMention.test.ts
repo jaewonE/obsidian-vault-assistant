@@ -25,6 +25,21 @@ test("detects all-files add-path mention token", () => {
 	assert.equal(context?.term, "assets/images");
 });
 
+test("detects hierarchical markdown mention token", () => {
+	const text = "Explain $Kafka";
+	const context = getActiveAddFilePathMention(text, text.length);
+	assert.ok(context);
+	assert.equal(context?.mode, "hierarchy");
+	assert.equal(context?.trigger, "$");
+	assert.equal(context?.term, "Kafka");
+});
+
+test("does not detect hierarchical mention when the option is disabled", () => {
+	const text = "Explain $Kafka";
+	const context = getActiveComposerMention(text, text.length, false);
+	assert.equal(context, null);
+});
+
 test("does not parse @ inside a normal token", () => {
 	const text = "contact email@test.com";
 	const context = getActiveAddFilePathMention(text, text.length);

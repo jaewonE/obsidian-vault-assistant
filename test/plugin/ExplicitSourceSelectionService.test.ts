@@ -74,6 +74,20 @@ test("search uses all files for @@ mode", () => {
 	assert.equal(results.some((item) => item.kind === "file" && item.path === "docs/spec.canvas"), true);
 });
 
+test("search uses markdown documents only and omits folders for $ mode", () => {
+	const harness = createHarness({
+		files: [
+			{ path: "docs/guide.md", name: "guide.md", extension: "md" },
+			{ path: "docs/spec.canvas", name: "spec.canvas", extension: "canvas" },
+		],
+		folders: ["docs"],
+	});
+
+	const results = harness.service.search("doc", "hierarchy");
+	assert.equal(results.some((item) => item.kind === "path"), false);
+	assert.equal(results.some((item) => item.path.endsWith(".canvas")), false);
+});
+
 test("search term with underscore matches filenames with spaces", () => {
 	const harness = createHarness({
 		files: [{ path: "docs/word1 word2.md", name: "word1 word2.md", extension: "md" }],

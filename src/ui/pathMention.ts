@@ -6,7 +6,7 @@ export interface AddFilePathMentionContext {
 	term: string;
 	tokenStart: number;
 	tokenEnd: number;
-	trigger: "@" | "@@";
+	trigger: "@" | "@@" | "$";
 }
 
 export interface SlashCommandMentionContext {
@@ -31,14 +31,16 @@ function isWhitespace(value: string): boolean {
 export function getActiveAddFilePathMention(
 	text: string,
 	cursorIndex: number,
+	hierarchyEnabled = true,
 ): AddFilePathMentionContext | null {
 	const safeCursor = Math.max(0, Math.min(cursorIndex, text.length));
 	const lineStart = text.lastIndexOf("\n", Math.max(0, safeCursor - 1)) + 1;
 
 	let tokenStart = -1;
-	let trigger: "@" | "@@" | null = null;
+	let trigger: "@" | "@@" | "$" | null = null;
 	for (let index = safeCursor - 1; index >= lineStart; index -= 1) {
-		if (text[index] !== "@") {
+		const character = text[index];
+		if (character !== "@" && (character !== "$" || !hierarchyEnabled)) {
 			continue;
 		}
 
@@ -47,14 +49,14 @@ export function getActiveAddFilePathMention(
 			continue;
 		}
 
-		if (text[index + 1] === "@") {
+		if (character === "@" && text[index + 1] === "@") {
 			tokenStart = index;
 			trigger = "@@";
 			break;
 		}
 
 		tokenStart = index;
-		trigger = "@";
+		trigger = character;
 		break;
 	}
 
@@ -74,7 +76,7 @@ export function getActiveAddFilePathMention(
 
 	return {
 		kind: "add-file-path",
-		mode: trigger === "@@" ? "all" : "markdown",
+		mode: trigger === "@@" ? "all" : trigger === "$" ? "hierarchy" : "markdown",
 		term,
 		tokenStart,
 		tokenEnd: safeCursor,
@@ -130,8 +132,9 @@ export function getActiveSlashCommandMention(
 export function getActiveComposerMention(
 	text: string,
 	cursorIndex: number,
+	hierarchyEnabled = true,
 ): ComposerMentionContext | null {
-	const addFilePathMention = getActiveAddFilePathMention(text, cursorIndex);
+	const addFilePathMention = getActiveAddFilePathMention(text, cursorIndex, hierarchyEnabled);
 	const commandMention = getActiveSlashCommandMention(text, cursorIndex);
 	if (!addFilePathMention) {
 		return commandMention;

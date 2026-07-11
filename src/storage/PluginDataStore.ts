@@ -74,6 +74,19 @@ function normalizeBoundedNumber(value: unknown, fallback: number, min: number, m
 	return clampNumber(parsed, min, max);
 }
 
+function normalizeHierarchyLimit(value: unknown): number {
+	const parsed = getNumber(value);
+	if (parsed === undefined || parsed === -1) {
+		return DEFAULT_SETTINGS.hierarchicalSelectionLimit;
+	}
+	return Math.max(1, Math.floor(parsed));
+}
+
+function normalizeYamlProperty(value: unknown): string {
+	const rawValue = getString(value)?.trim() ?? "";
+	return rawValue.split(/\s+/u, 1)[0] ?? "";
+}
+
 function cloneDefaults(): NotebookLMPluginData {
 	return {
 		settings: { ...DEFAULT_PLUGIN_DATA.settings },
@@ -137,6 +150,10 @@ function normalizeSettings(rawSettings: unknown): NotebookLMPluginSettings {
 		),
 		searchWithExplicitSelections:
 			getBoolean(rawSettings.searchWithExplicitSelections) ?? DEFAULT_SETTINGS.searchWithExplicitSelections,
+		hierarchicalSelectionEnabled:
+			getBoolean(rawSettings.hierarchicalSelectionEnabled) ?? DEFAULT_SETTINGS.hierarchicalSelectionEnabled,
+		hierarchicalParentProperty: normalizeYamlProperty(rawSettings.hierarchicalParentProperty),
+		hierarchicalSelectionLimit: normalizeHierarchyLimit(rawSettings.hierarchicalSelectionLimit),
 	};
 }
 
@@ -292,7 +309,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 				!kindValue ||
 				(kindValue !== "file" && kindValue !== "path") ||
 				!modeValue ||
-				(modeValue !== "markdown" && modeValue !== "all") ||
+				(modeValue !== "markdown" && modeValue !== "all" && modeValue !== "hierarchy") ||
 				!path ||
 				subfileCount === undefined
 			) {
@@ -314,7 +331,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 				item,
 			): item is {
 				kind: "file" | "path";
-				mode: "markdown" | "all";
+				mode: "markdown" | "all" | "hierarchy";
 				path: string;
 				subfileCount: number;
 				resolvedPaths: string[];

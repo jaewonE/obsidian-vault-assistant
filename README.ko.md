@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.7.0`
+Version: `0.8.0`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -12,7 +12,7 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 이 플러그인은 오른쪽 사이드바 채팅 워크플로를 제공합니다.
 
 1. Vault 노트에 대한 선택적 BM25 검색
-2. `@` / `@@`를 통한 선택적 명시 소스 지정
+2. `@` / `@@` / `$`를 통한 선택적 명시 소스 지정
 3. NotebookLM 소스 준비, 업로드, 재사용
 4. 제한된 소스 범위로 NotebookLM 질의
 5. 후속 질의를 위한 대화 및 소스 메타데이터 저장
@@ -29,6 +29,13 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
   - `@@`: 모든 파일/경로 검색
   - 입력 중 실시간 검색, 키보드/마우스 선택, 공백 및 underscore-to-space 검색 지원
   - 선택한 파일/경로는 선택 직후 순차 업로드 시작
+- composer에서 YAML 계층 문서 선택:
+  - `$`를 입력하면 `@`와 동일한 Markdown 문서 목록을 검색
+  - 문서를 선택하면 선택 문서와, 설정한 YAML 속성으로 해당 문서를 부모로 연결한 모든 하위 문서를 단계별로 포함
+  - `parents: ["[[Kafka]]"]` 같은 wikilink 문자열 또는 목록을 지원하며, frontmatter나 설정한 속성이 없는 문서는 제외
+  - 순환 및 중복 연결이 있어도 각 문서는 한 번만 추가
+  - 문서 제한값은 선택 문서를 포함한 전체 추가 문서 수에 적용되며 `-1`은 모든 하위 문서를 포함
+  - YAML 속성 설정이 비어 있거나 선택 문서에 해당 속성이 없으면 선택을 추가하지 않음
 - composer slash command 자동완성:
   - `/source`, `/create`, `/setting`, `/research`
   - `/source add`, `/source get`, `/research links`, `/research deep`
@@ -91,7 +98,7 @@ nlm login --check
 3. Obsidian **Settings -> Community plugins**에서 플러그인을 활성화합니다.
 4. `Open NotebookLM chat` 명령을 실행합니다.
 5. 오른쪽 사이드바 채팅 뷰에서 질문합니다.
-6. 필요하면 전송 전에 `@` / `@@`로 명시 소스를 추가합니다.
+6. 필요하면 전송 전에 `@` / `@@`로 명시 소스를 추가하거나 `$`로 YAML 문서 트리를 추가합니다.
 7. 필요하면 `/` command 자동완성을 사용합니다.
 8. `/research` 명령으로 NotebookLM-only 소스를 준비합니다.
 9. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
@@ -107,6 +114,10 @@ nlm login --check
 
 - `Debug mode`
 - `Refresh Auth`
+- Hierarchical source selection:
+  - `Enable $ hierarchical selection` (기본값: enabled)
+  - `YAML parent property` (기본값: 빈 문자열, 한 단어만 허용). 입력 완료 시 추가 단어를 제거하고 경고를 표시합니다.
+  - `Hierarchical document limit` (기본값: `-1`). 선택 문서를 포함한 전체 문서 수를 제한하며 `-1`은 모든 하위 문서를 포함합니다.
 - BM25 parameters:
   - `Top N`
   - `cutoff ratio`
@@ -156,7 +167,8 @@ npm test
 
 - `src/main.ts`: 최소 entrypoint
 - `src/plugin/NotebookLMPlugin.ts`: plugin lifecycle 및 orchestration
-- `src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` 검색 및 path expansion
+- `src/plugin/ExplicitSourceSelectionService.ts`: `@` / `@@` / `$` 검색 및 selection
+- `src/plugin/hierarchicalSelection.ts`: YAML 부모 링크 graph expansion, 순환 및 제한 처리
 - `src/plugin/SourcePreparationService.ts`: source upload/reuse/replace/eviction service
 - `src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
 - `src/plugin/historySourceIds.ts`: bounded history source carry-over logic

@@ -1,17 +1,17 @@
-# BM25 + NotebookLM Algorithms and Implementation (v0.6.1)
+# BM25 + NotebookLM Algorithms and Implementation (v0.8.0)
 
 ## 1. Purpose
 
-This document specifies the production algorithms used in `v0.6.1` for:
+This document specifies the production algorithms used in `v0.8.0` for:
 
 1. Existing BM25 retrieval + source preparation pipeline from `v0.3.2`.
-2. New explicit source selection pipeline via composer `@` / `@@`.
+2. Explicit source selection via composer `@` / `@@` and YAML hierarchy selection via `$`.
 3. Merge semantics between BM25-selected sources and explicitly selected files/paths.
 4. Query metadata persistence updates for explicit selections.
 5. Slash command and subcommand autocomplete in composer (`/source`, `/create`, `/setting`, `/research`, `/source add`, `/source get`, `/research links`, `/research deep`).
 6. NotebookLM-only `/research` source lifecycle (link, links, fast, deep) with non-local chip UX and query-source merging.
 
-`v0.6.1` keeps BM25 scoring/indexing behavior unchanged and preserves the `v0.6.0` research behavior, while treating NotebookLM `NOT_FOUND`/404 responses for persisted notebook IDs as recoverable readiness misses that create and persist a replacement notebook.
+`v0.8.0` keeps BM25 scoring/indexing and research behavior unchanged while adding hierarchy-aware markdown selection.
 
 ---
 
@@ -27,6 +27,7 @@ Main components:
   - `src/ui/pathMention.ts`
   - `src/plugin/ExplicitSourceSelectionService.ts`
   - `src/plugin/explicitSelectionMerge.ts`
+  - `src/plugin/hierarchicalSelection.ts`
 - Source sync/orchestration:
   - `src/plugin/SourcePreparationService.ts`
   - `src/plugin/NotebookLMPlugin.ts`
@@ -47,20 +48,21 @@ Main components:
 
 ---
 
-## 3. Composer mention parsing algorithm (`@` / `@@` / `/`)
+## 3. Composer mention parsing algorithm (`@` / `@@` / `$` / `/`)
 
 Implementation: `src/ui/pathMention.ts`, `src/ui/slashCommands.ts`, `src/ui/ChatView.ts`
 
-### 3.1 Active explicit-source token detection (`@`, `@@`)
+### 3.1 Active explicit-source token detection (`@`, `@@`, `$`)
 
 Given textarea value and cursor position:
 
 1. Scan backward from cursor to token start (whitespace boundary).
-2. Reject if token does not start with `@`.
+2. Reject if token does not start with `@` or an enabled `$`.
 3. Reject if token is embedded in another token (non-whitespace prefix).
 4. Parse:
    - `@term` -> mode `markdown`
    - `@@term` -> mode `all`
+   - `$term` -> mode `hierarchy`
 5. Return token bounds (`tokenStart`, `tokenEnd`) and search `term`.
 
 ### 3.2 Explicit-source token replacement on selection
@@ -108,6 +110,7 @@ Implementation: `src/plugin/ExplicitSourceSelectionService.ts`
 
 - `@` (`markdown` mode): file universe is `vault.getMarkdownFiles()`.
 - `@@` (`all` mode): file universe is `vault.getFiles()`.
+- `$` (`hierarchy` mode): file universe is `vault.getMarkdownFiles()` and folder candidates are omitted.
 
 ### 4.2 Candidate types
 
@@ -127,6 +130,17 @@ Candidates are ranked by lexical match score over file/folder name and full path
 - deterministic tie-break by kind then path
 
 If the active mention has no matches, UI renders `No more files found.`
+
+### 4.4 YAML hierarchy expansion
+
+When a `$` document candidate is selected:
+
+1. Stop without creating a chip when the configured YAML property is blank, or when the selected document has no frontmatter/configured property.
+2. Scan markdown frontmatter entries that contain the configured property and resolve wikilink string/list values through Obsidian's metadata cache.
+3. Build a reverse parent-to-children graph and traverse from the selected document breadth-first, with lexical ordering inside each level.
+4. Include the selected document first, then descendants. Ignore documents without frontmatter or the configured property.
+5. Guard visited paths to prevent duplicate additions and infinite cycles.
+6. Apply the configured total-document limit, including the selected document; `-1` means unlimited.
 
 ---
 

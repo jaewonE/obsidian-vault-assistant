@@ -3,9 +3,9 @@ import type {
 	AddFilePathMode,
 	AddFilePathSearchItem,
 	AddFilePathSelectionKind,
-	ComposerSelectionItem,
 	ResolveComposerSelectionResult,
 } from "../types";
+import { resolveHierarchicalMarkdownPaths } from "./hierarchicalSelection";
 
 export const PATH_SELECTION_WARNING_SUBFILE_THRESHOLD = 15;
 export const PATH_SELECTION_REJECT_SUBFILE_THRESHOLD = 200;
@@ -123,7 +123,7 @@ export class ExplicitSourceSelectionService {
 	}
 
 	search(term: string, mode: AddFilePathMode, limit = DEFAULT_SEARCH_RESULT_LIMIT): AddFilePathSearchItem[] {
-		const files = mode === "markdown" ? this.app.vault.getMarkdownFiles() : this.app.vault.getFiles();
+		const files = mode === "all" ? this.app.vault.getFiles() : this.app.vault.getMarkdownFiles();
 		const normalizedTerm = normalizeText(term);
 		const ranked: RankedSearchItem[] = [];
 
@@ -145,30 +145,32 @@ export class ExplicitSourceSelectionService {
 			});
 		}
 
-		const folderSubfileCount = buildFolderSubfileCount(files.map((file) => file.path));
-		const allLoaded = this.app.vault.getAllLoadedFiles();
-		for (const abstractFile of allLoaded) {
-			if (!isVaultFolder(abstractFile) || !abstractFile.path) {
-				continue;
+		if (mode !== "hierarchy") {
+			const folderSubfileCount = buildFolderSubfileCount(files.map((file) => file.path));
+			const allLoaded = this.app.vault.getAllLoadedFiles();
+			for (const abstractFile of allLoaded) {
+				if (!isVaultFolder(abstractFile) || !abstractFile.path) {
+					continue;
+				}
+				const subfileCount = folderSubfileCount.get(abstractFile.path) ?? 0;
+				if (subfileCount === 0) {
+					continue;
+				}
+				const score = scoreMatch(abstractFile.name, abstractFile.path, normalizedTerm);
+				if (score === null) {
+					continue;
+				}
+				ranked.push({
+					score,
+					item: {
+						kind: "path",
+						path: abstractFile.path,
+						name: abstractFile.name,
+						parentPath: getParentPath(abstractFile.path),
+						subfileCount,
+					},
+				});
 			}
-			const subfileCount = folderSubfileCount.get(abstractFile.path) ?? 0;
-			if (subfileCount === 0) {
-				continue;
-			}
-			const score = scoreMatch(abstractFile.name, abstractFile.path, normalizedTerm);
-			if (score === null) {
-				continue;
-			}
-			ranked.push({
-				score,
-				item: {
-					kind: "path",
-					path: abstractFile.path,
-					name: abstractFile.name,
-					parentPath: getParentPath(abstractFile.path),
-					subfileCount,
-				},
-			});
 		}
 
 		ranked.sort((left, right) => {
@@ -188,10 +190,21 @@ export class ExplicitSourceSelectionService {
 		kind: AddFilePathSelectionKind;
 		path: string;
 		mode: AddFilePathMode;
+		hierarchicalParentProperty?: string;
+		hierarchicalSelectionLimit?: number;
 	}): ResolveComposerSelectionResult {
 		const { kind, mode, path } = params;
 		if (kind === "file") {
-			return this.resolveFileSelection(path, mode);
+			return this.resolveFileSelection(path, mode, {
+				parentProperty: params.hierarchicalParentProperty ?? "",
+				limit: params.hierarchicalSelectionLimit ?? -1,
+			});
+		}
+		if (mode === "hierarchy") {
+			return {
+				selection: null,
+				error: "Only markdown documents can be added with $.",
+			};
 		}
 		return this.resolvePathSelection(path, mode);
 	}
@@ -213,7 +226,11 @@ export class ExplicitSourceSelectionService {
 		return null;
 	}
 
-	private resolveFileSelection(path: string, mode: AddFilePathMode): ResolveComposerSelectionResult {
+	private resolveFileSelection(
+		path: string,
+		mode: AddFilePathMode,
+		hierarchy: { parentProperty: string; limit: number },
+	): ResolveComposerSelectionResult {
 		const abstractFile = this.app.vault.getAbstractFileByPath(path);
 		if (!isVaultFile(abstractFile)) {
 			return {
@@ -222,10 +239,33 @@ export class ExplicitSourceSelectionService {
 			};
 		}
 
-		if (mode === "markdown" && abstractFile.extension.toLocaleLowerCase() !== "md") {
+		if (mode !== "all" && abstractFile.extension.toLocaleLowerCase() !== "md") {
 			return {
 				selection: null,
-				error: "Only markdown files can be added with @.",
+				error: `Only markdown files can be added with ${mode === "hierarchy" ? "$" : "@"}.`,
+			};
+		}
+
+		if (mode === "hierarchy") {
+			const resolved = resolveHierarchicalMarkdownPaths({
+				app: this.app,
+				rootPath: abstractFile.path,
+				parentProperty: hierarchy.parentProperty,
+				limit: hierarchy.limit,
+			});
+			if (resolved.error || resolved.paths.length === 0) {
+				return { selection: null, error: resolved.error };
+			}
+			return {
+				selection: {
+					id: generateSelectionId(),
+					kind: "file",
+					mode,
+					path: abstractFile.path,
+					label: abstractFile.name,
+					filePaths: resolved.paths,
+					subfileCount: resolved.paths.length,
+				},
 			};
 		}
 
@@ -287,7 +327,7 @@ export class ExplicitSourceSelectionService {
 
 	private getDescendantPaths(path: string, mode: AddFilePathMode): string[] {
 		const prefix = `${path}/`;
-		const files = mode === "markdown" ? this.app.vault.getMarkdownFiles() : this.app.vault.getFiles();
+		const files = mode === "all" ? this.app.vault.getFiles() : this.app.vault.getMarkdownFiles();
 		const descendants: string[] = [];
 		for (const file of files) {
 			if (!file.path.startsWith(prefix)) {

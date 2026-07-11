@@ -397,7 +397,11 @@ export class ChatView extends ItemView {
 		}
 
 		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
+		const mentionContext = getActiveComposerMention(
+			this.inputEl.value,
+			cursorIndex,
+			this.plugin.settings.hierarchicalSelectionEnabled,
+		);
 		if (!mentionContext) {
 			this.mentionSuppressedKey = null;
 			this.clearMentionPanel();
@@ -502,7 +506,11 @@ export class ChatView extends ItemView {
 	private dismissMentionPanel(): void {
 		if (this.inputEl) {
 			const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-			const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
+			const mentionContext = getActiveComposerMention(
+				this.inputEl.value,
+				cursorIndex,
+				this.plugin.settings.hierarchicalSelectionEnabled,
+			);
 			this.mentionSuppressedKey = mentionContext
 				? this.getMentionSuppressionKey(mentionContext, this.inputEl.value)
 				: null;
@@ -529,7 +537,11 @@ export class ChatView extends ItemView {
 		}
 
 		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
+		const mentionContext = getActiveComposerMention(
+			this.inputEl.value,
+			cursorIndex,
+			this.plugin.settings.hierarchicalSelectionEnabled,
+		);
 		if (!mentionContext) {
 			return;
 		}
@@ -566,7 +578,10 @@ export class ChatView extends ItemView {
 		}
 
 		const alreadyAdded = this.composerSelections.some(
-			(selection) => selection.kind === resolvedSelection.kind && selection.path === resolvedSelection.path,
+			(selection) =>
+				selection.kind === resolvedSelection.kind &&
+				selection.mode === resolvedSelection.mode &&
+				selection.path === resolvedSelection.path,
 		);
 		if (alreadyAdded) {
 			new Notice("This file/path is already selected.");
@@ -613,7 +628,11 @@ export class ChatView extends ItemView {
 		}
 
 		const cursorIndex = this.inputEl.selectionStart ?? this.inputEl.value.length;
-		const mentionContext = getActiveComposerMention(this.inputEl.value, cursorIndex);
+		const mentionContext = getActiveComposerMention(
+			this.inputEl.value,
+			cursorIndex,
+			this.plugin.settings.hierarchicalSelectionEnabled,
+		);
 		this.mentionPanelEl.empty();
 		if (!mentionContext) {
 			this.mentionPanelEl.style.display = "none";
@@ -742,11 +761,11 @@ export class ChatView extends ItemView {
 			chipEl.addClass("nlm-chat-composer-selection-uploading");
 		}
 		const chipDisplayText =
-			selection.kind === "path"
+			selection.kind === "path" || selection.mode === "hierarchy"
 				? `${getLastPathSegment(selection.path)} (${selection.subfileCount})`
 				: selection.label;
 		const chipTooltipText =
-			selection.kind === "path"
+			selection.kind === "path" || selection.mode === "hierarchy"
 				? `${selection.path} (${selection.subfileCount})`
 				: selection.path;
 

@@ -250,6 +250,8 @@ test("normalizes out-of-range settings values from persisted data", async () => 
 			bm25k1: -2,
 			bm25b: -1,
 			queryTimeoutSeconds: 0,
+			hierarchicalParentProperty: "parents ignored",
+			hierarchicalSelectionLimit: 0,
 		},
 		sourceRegistry: {},
 		conversationHistory: [],
@@ -267,6 +269,32 @@ test("normalizes out-of-range settings values from persisted data", async () => 
 	assert.equal(settings.bm25b, 0);
 	assert.equal(settings.queryTimeoutSeconds, 5);
 	assert.equal(settings.searchWithExplicitSelections, true);
+	assert.equal(settings.hierarchicalSelectionEnabled, true);
+	assert.equal(settings.hierarchicalParentProperty, "parents");
+	assert.equal(settings.hierarchicalSelectionLimit, 1);
+});
+
+test("persists hierarchy selection settings", async () => {
+	const persistence = new InMemoryPersistence();
+	const store = new PluginDataStore(persistence);
+	await store.load();
+
+	assert.equal(store.getSettings().hierarchicalSelectionEnabled, true);
+	assert.equal(store.getSettings().hierarchicalParentProperty, "");
+	assert.equal(store.getSettings().hierarchicalSelectionLimit, -1);
+
+	store.updateSettings({
+		hierarchicalSelectionEnabled: false,
+		hierarchicalParentProperty: "parents",
+		hierarchicalSelectionLimit: 25,
+	});
+	await store.save();
+
+	const reloaded = new PluginDataStore(persistence);
+	await reloaded.load();
+	assert.equal(reloaded.getSettings().hierarchicalSelectionEnabled, false);
+	assert.equal(reloaded.getSettings().hierarchicalParentProperty, "parents");
+	assert.equal(reloaded.getSettings().hierarchicalSelectionLimit, 25);
 });
 
 test("persists explicit-selection BM25 toggle setting", async () => {

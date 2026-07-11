@@ -2,6 +2,19 @@
 
 All notable repository changes are documented here.
 
+## [0.8.0] - 2026-07-11
+
+### Added
+
+- Added optional `$` composer selection for a markdown document and every descendant linked through a configurable YAML parent property.
+- Added breadth-first hierarchy expansion with wikilink-list support, deterministic ordering, duplicate/cycle protection, and an optional total-document limit (`-1` for unlimited).
+- Added settings to enable hierarchical selection, choose a one-word YAML property, and limit the total selected document count.
+- Added validation and regression coverage for `$` mention parsing, YAML property normalization, missing frontmatter/property handling, hierarchy limits, and cyclic links.
+
+### Changed
+
+- Updated English/Korean usage, settings, algorithm, and pipeline documentation for hierarchical source selection.
+
 ## [0.7.0] - 2026-07-08
 
 ### Added
