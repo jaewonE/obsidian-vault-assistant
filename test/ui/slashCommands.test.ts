@@ -6,7 +6,7 @@ test("returns all root slash commands for empty term", () => {
 	const suggestions = searchSlashCommandSuggestions("");
 	assert.deepEqual(
 		suggestions.map((item) => item.text),
-		["/source", "/create", "/setting", "/research"],
+		["/source", "/create", "/setting", "/research", "/anki"],
 	);
 });
 
@@ -60,5 +60,12 @@ test("filters research subcommands", () => {
 	assert.deepEqual(
 		suggestions.map((item) => item.text),
 		["/research deep"],
+	);
+});
+
+test("shows Anki artifact subcommands", () => {
+	assert.deepEqual(
+		searchSlashCommandSuggestions("anki ").map((item) => item.text),
+		["/anki flashcards", "/anki quiz"],
 	);
 });

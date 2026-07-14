@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.8.0`
+Version: `0.9.0`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -22,7 +22,8 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - 오른쪽 사이드바 채팅 뷰
 - 사용자 질문 말풍선 및 Markdown으로 렌더링되는 NotebookLM 답변
 - 각 질문과 답변의 복사 아이콘으로 원문 메시지 텍스트를 클립보드에 복사
-- 검색 -> 업로드 -> 응답 3단계 진행 상태 UI
+- 질문 처리용 검색 -> 업로드 -> 응답 3단계 진행 상태 UI
+- Anki 생성용 소스 선택 -> 업로드 -> 카드 생성 -> Anki 동기화 4단계 진행 상태 UI
 - 질의 처리 중에도 입력, mention 검색, chip 조작, `Search vault` 토글 사용 가능
 - composer에서 명시 소스 선택:
   - `@`: Markdown 파일/경로 검색
@@ -37,8 +38,13 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
   - 문서 제한값은 선택 문서를 포함한 전체 추가 문서 수에 적용되며 `-1`은 모든 하위 문서를 포함
   - YAML 속성 설정이 비어 있거나 선택 문서에 해당 속성이 없으면 선택을 추가하지 않음
 - composer slash command 자동완성:
-  - `/source`, `/create`, `/setting`, `/research`
-  - `/source add`, `/source get`, `/research links`, `/research deep`
+  - `/source`, `/create`, `/setting`, `/research`, `/anki`
+  - `/source add`, `/source get`, `/research links`, `/research deep`, `/anki flashcards`, `/anki quiz`
+- `/Anki` 명령 실행(채팅 기록 메시지는 추가하지 않음):
+  - `/Anki flashcards`: 현재 composer source chip만 대상으로 한국어 플래시카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
+  - `/Anki quiz`: 현재 composer source chip만 대상으로 한국어 객관식 퀴즈 카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
+  - 로컬 `@` / `@@` / `$` chip은 생성 전에 준비하며, 활성 research chip도 현재 소스로 포함
+  - NotebookLM artifact 생성 전에 AnkiConnect를 검사하고, 실패 내용은 Obsidian 개발자 콘솔과 알림에 함께 표시
 - `/research` 명령 실행:
   - URL 또는 YouTube 링크를 NotebookLM 소스로 추가
   - 여러 링크를 순차 추가
@@ -73,6 +79,7 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - Obsidian Desktop
 - Node.js 18+
 - 전역 설치된 `notebooklm-mcp-cli`
+- Anki Desktop 앱, 활성화된 AnkiConnect 애드온, 그리고 `Front`, `Back` 필드만 가진 표준 `Basic` 노트 타입
 
 설치 예시:
 
@@ -99,10 +106,11 @@ nlm login --check
 4. `Open NotebookLM chat` 명령을 실행합니다.
 5. 오른쪽 사이드바 채팅 뷰에서 질문합니다.
 6. 필요하면 전송 전에 `@` / `@@`로 명시 소스를 추가하거나 `$`로 YAML 문서 트리를 추가합니다.
-7. 필요하면 `/` command 자동완성을 사용합니다.
+7. 필요하면 `/` command 자동완성(`/source`, `/create`, `/setting`, `/research`, `/anki` 및 하위 명령)을 사용합니다.
 8. `/research` 명령으로 NotebookLM-only 소스를 준비합니다.
-9. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
-10. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
+9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 채팅 기록 없이 Anki 카드를 생성하고 검증합니다.
+10. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
+11. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
 
 ## 명령과 Hotkeys
 
@@ -128,14 +136,14 @@ nlm login --check
 
 ## Privacy and Network Access
 
-- 이 플러그인은 NotebookLM 연동을 위해 로컬에서 실행되는 `notebooklm-mcp-cli` 및 Google NotebookLM에 네트워크 요청을 사용합니다.
+- 이 플러그인은 NotebookLM 연동을 위해 로컬에서 실행되는 `notebooklm-mcp-cli` 및 Google NotebookLM에 네트워크 요청을 사용합니다. Anki 업로드는 로컬 AnkiConnect 엔드포인트 `http://127.0.0.1:8765`에만 전송됩니다.
 - vault 외부 파일을 읽지 않습니다.
 - 플러그인 설정, 대화 기록, 소스 메타데이터는 Obsidian 플러그인 데이터(`data.json`)에 저장됩니다.
 - raw research source content는 명시적으로 가져오지 않는 한 로컬에 저장하지 않습니다.
 
 ## Desktop support
 
-이 플러그인은 `notebooklm-mcp-cli` 실행 파일과 NotebookLM Desktop 연동 흐름에 의존하므로 `isDesktopOnly`가 `true`입니다.
+이 플러그인은 `notebooklm-mcp-cli` 실행 파일, NotebookLM Desktop 연동 흐름, 로컬 AnkiConnect 서비스에 의존하므로 `isDesktopOnly`가 `true`입니다.
 
 ## 개발
 
@@ -173,6 +181,7 @@ npm test
 - `src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
 - `src/plugin/historySourceIds.ts`: bounded history source carry-over logic
 - `src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
+- `src/anki/`: 독립된 NotebookLM artifact 계획/생성 및 AnkiConnect import service
 - `src/search/BM25.ts`: BM25 indexing/search
 - `src/storage/PluginDataStore.ts`: settings/history/source registry 저장
 - `src/ui/`: chat view, mention parser, history modal, settings tab
@@ -203,6 +212,11 @@ nlm login --check
 ```bash
 nlm doctor --verbose
 ```
+
+Anki 업로드 연결 실패:
+
+1. Anki Desktop을 열고 AnkiConnect 애드온을 활성화합니다.
+2. `Basic` 노트 타입이 정확히 `Front`, `Back` 필드만 가지는지 확인합니다.
 
 ## License
 

@@ -2,11 +2,11 @@ import { ButtonComponent, ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, set
 import type NotebookLMPlugin from "../main";
 import type {
 	AddFilePathSearchItem,
+	ChatProgressState,
 	ConversationQueryMetadata,
 	ComposerSelectionItem,
 	ComposerSelectionUploadStatus,
 	NotebookResearchSourceItem,
-	QueryProgressState,
 	QueryProgressStepState,
 	QuerySourceItem,
 	ResearchOperationView,
@@ -23,6 +23,7 @@ import {
 	type SlashCommandSuggestion,
 } from "./slashCommands";
 import { parseResearchCommand } from "./researchCommands";
+import { parseAnkiCommand } from "./ankiCommands";
 import { ResearchLinksModal } from "./ResearchLinksModal";
 import { DeepResearchReportModal } from "./DeepResearchReportModal";
 import { openInDefaultBrowser } from "./externalBrowser";
@@ -153,7 +154,7 @@ export class ChatView extends ItemView {
 	private historyButton: ButtonComponent | null = null;
 	private busy = false;
 	private renderVersion = 0;
-	private queryProgress: QueryProgressState | null = null;
+	private queryProgress: ChatProgressState | null = null;
 	private unsubscribeProgress: (() => void) | null = null;
 	private unsubscribeExplicitUploadState: (() => void) | null = null;
 	private unsubscribeResearchOperations: (() => void) | null = null;
@@ -1082,6 +1083,31 @@ export class ChatView extends ItemView {
 		if (!query) {
 			return;
 		}
+		const parsedAnkiCommand = parseAnkiCommand(query);
+		if (parsedAnkiCommand.kind !== "none") {
+			if (parsedAnkiCommand.kind === "invalid") {
+				new Notice(parsedAnkiCommand.error);
+				return;
+			}
+			const explicitSelections = [...this.composerSelections];
+			const manualSourceIds = this.plugin.getActiveResearchSourceIds();
+			this.inputEl.value = "";
+			this.clearMentionPanel();
+			this.setBusy(true);
+			try {
+				const runPromise = this.plugin.handleAnkiCommand(parsedAnkiCommand.kind, {
+					explicitSelections,
+					manualSourceIds,
+				});
+				this.renderMessages();
+				await runPromise;
+			} finally {
+				this.setBusy(false);
+				this.renderComposerSelections();
+				this.inputEl.focus();
+			}
+			return;
+		}
 		const parsedCommand = parseResearchCommand(query);
 		if (parsedCommand.kind !== "none") {
 			if (parsedCommand.kind === "invalid") {
@@ -1388,7 +1414,12 @@ export class ChatView extends ItemView {
 		}));
 	}
 
-	private renderProgressPanel(containerEl: HTMLDivElement, progress: QueryProgressState): void {
+	private renderProgressPanel(containerEl: HTMLDivElement, progress: ChatProgressState): void {
+		if (progress.kind === "anki") {
+			this.renderAnkiProgressPanel(containerEl, progress);
+			return;
+		}
+
 		const panelEl = containerEl.createDiv({ cls: "nlm-chat-progress" });
 		panelEl.createDiv({ cls: "nlm-chat-progress-title", text: "NotebookLM process" });
 
@@ -1417,6 +1448,44 @@ export class ChatView extends ItemView {
 			"Wait for NotebookLM response",
 			progress.steps.response,
 			progress.responseDetail,
+		);
+	}
+
+	private renderAnkiProgressPanel(containerEl: HTMLDivElement, progress: Extract<ChatProgressState, { kind: "anki" }>): void {
+		const panelEl = containerEl.createDiv({ cls: "nlm-chat-progress" });
+		panelEl.createDiv({ cls: "nlm-chat-progress-title", text: `NotebookLM to Anki: ${progress.artifactType}` });
+
+		this.renderProgressStep(panelEl, "1", "Select current sources", progress.steps.search, progress.searchDetail);
+		const uploadStepEl = this.renderProgressStep(
+			panelEl,
+			"2",
+			"Upload selected sources",
+			progress.steps.upload,
+			progress.uploadDetail,
+		);
+		uploadStepEl.createDiv({
+			cls: "nlm-chat-progress-meta",
+			text: `Uploaded ${progress.upload.uploadedCount}, reused ${progress.upload.reusedCount}, total ${progress.upload.total}`,
+		});
+		if (progress.steps.upload === "active" && progress.upload.currentPath) {
+			uploadStepEl.createDiv({
+				cls: "nlm-chat-progress-current",
+				text: `Current file: ${progress.upload.currentPath}`,
+			});
+		}
+		this.renderProgressStep(
+			panelEl,
+			"3",
+			`Generate ${progress.artifactType}`,
+			progress.steps.generation,
+			progress.generationDetail,
+		);
+		this.renderProgressStep(
+			panelEl,
+			"4",
+			"Synchronize with Anki",
+			progress.steps.sync,
+			progress.syncDetail,
 		);
 	}
 

@@ -15,6 +15,7 @@ const COMMAND_DEFINITIONS: SlashCommandDefinition[] = [
 	{ command: "create", subcommands: [] },
 	{ command: "setting", subcommands: [] },
 	{ command: "research", subcommands: ["links", "deep"] },
+	{ command: "anki", subcommands: ["flashcards", "quiz"] },
 ];
 
 function toRootSuggestion(command: string): SlashCommandSuggestion {

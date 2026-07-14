@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.8.0`
+Version: `0.9.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -22,7 +22,8 @@ The plugin provides a right-sidebar chat workflow:
 - Right sidebar chat view (single-tab operation)
 - User questions in bubbles, NotebookLM answers rendered as markdown
 - Copy icons on each question and answer copy the original message text to the clipboard.
-- Live 3-step progress UI (search -> upload -> response)
+- Live 3-step progress UI for questions (search -> upload -> response)
+- Live 4-step progress UI for Anki generation (select -> upload -> generate cards -> synchronize with Anki)
 - During query processing, composer interactions stay enabled (input, mention search, chip actions, `Search vault` toggle); only `Send`, `New`, and `History` are disabled.
 - Step 2 upload progress is synchronized with explicit pre-upload state (for example, `2/5` can be shown if Submit is pressed during the 3rd upload).
 - Explicit source selection in composer:
@@ -40,13 +41,18 @@ The plugin provides a right-sidebar chat workflow:
   - the configured document limit includes the selected document; `-1` includes every descendant
   - `$` does not create a selection while the YAML property setting is blank or the selected document lacks that property
 - Slash command autocomplete in composer:
-  - type `/` to show available root commands (`/source`, `/create`, `/setting`, `/research`)
+  - type `/` to show available root commands (`/source`, `/create`, `/setting`, `/research`, `/anki`)
   - root command list is filtered by typed text (for example `/s`)
   - subcommands are suggested after a completed root command (for example `/source ` -> `/source add`, `/source get`; `/research ` -> `/research links`, `/research deep`)
   - subcommand list is filtered while typing (for example `/source ad` -> `/source add`)
   - pressing `Enter` with an active suggestion autocompletes to the selected command text instead of sending
   - when no command matches (for example `/source edit`), the suggestion panel is hidden and `Enter` performs normal query send
   - slash command rows are rendered with a distinct command-style background pill in the suggestion list
+- `/Anki` command execution (does not add chat message history entries):
+  - `/Anki flashcards`: create Korean flashcards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
+  - `/Anki quiz`: create Korean multiple-choice quiz cards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
+  - local `@` / `@@` / `$` chips are prepared before generation; active research chips are also included as current sources
+  - AnkiConnect is checked before NotebookLM artifact generation; a failed generation is logged to the Obsidian developer console and displayed as a notice
 - `/research` command execution (does not add chat message history entries):
   - `/research <single-http-url>`: add one NotebookLM source via `source_type=url` (works for regular web links and YouTube links)
   - `/research links <url...>`: sequentially add multiple links as NotebookLM sources
@@ -108,6 +114,7 @@ The plugin provides a right-sidebar chat workflow:
 - Obsidian Desktop
 - Node.js 18+
 - Global installation of `notebooklm-mcp-cli`
+- Anki desktop app with the AnkiConnect add-on enabled, including the standard `Basic` model with `Front` and `Back` fields
 
 Install `notebooklm-mcp-cli` (one option):
 
@@ -161,10 +168,11 @@ npm test
 4. Run command: `Open NotebookLM chat`.
 5. Ask questions in the right sidebar chat view.
 6. Optionally add explicit sources via `@` / `@@`, or add a YAML-linked document subtree via `$`, before sending.
-7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, `/research`, and supported subcommands).
+7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, `/research`, `/anki`, and supported subcommands).
 8. Run `/research` commands from the same composer to prepare NotebookLM-only sources without adding chat history messages.
-9. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
-10. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
+9. With one or more current source chips selected, run `/Anki flashcards` or `/Anki quiz` to create and verify Anki cards without adding a chat history message.
+10. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
+11. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
 ## Commands and Hotkeys
 
@@ -190,14 +198,14 @@ No default hotkeys are assigned. Users can assign shortcuts in Obsidian **Settin
 
 ## Privacy and Network Access
 
-- This plugin uses network access through locally installed `notebooklm-mcp-cli` and Google NotebookLM.
+- This plugin uses network access through locally installed `notebooklm-mcp-cli` and Google NotebookLM. Anki uploads are sent only to the local AnkiConnect endpoint at `http://127.0.0.1:8765`.
 - It does not read files outside the current vault.
 - Settings, conversation history, and source metadata are stored in the plugin's Obsidian `data.json`.
 - Raw research source content is not stored locally unless explicitly fetched later.
 
 ## Desktop support
 
-This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` executables and the NotebookLM desktop integration flow.
+This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` executables, the NotebookLM desktop integration flow, and a local AnkiConnect service.
 
 ## Repository structure
 
@@ -209,6 +217,7 @@ This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` exe
 - `src/plugin/explicitSelectionMerge.ts`: BM25 + explicit merge utilities
 - `src/plugin/historySourceIds.ts`: bounded history source carry-over logic
 - `src/mcp/NotebookLMMcpClient.ts`: MCP subprocess/client wrapper
+- `src/anki/`: self-contained NotebookLM artifact planning/generation and AnkiConnect import service
 - `src/search/BM25.ts`: BM25 indexing/search logic
 - `src/storage/PluginDataStore.ts`: persisted settings/history/source registry
 - `src/ui/`: chat view, mention parser, history modal, settings tab
@@ -239,6 +248,11 @@ General diagnostics:
 ```bash
 nlm doctor --verbose
 ```
+
+Anki upload cannot connect:
+
+1. Open Anki Desktop and enable the AnkiConnect add-on.
+2. Confirm that the `Basic` note type has exactly `Front` and `Back` fields.
 
 ## License
 

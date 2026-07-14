@@ -61,9 +61,21 @@ export type ResearchCommandParseResult =
 			kind: "research-fast";
 			query: string;
 	  }
+		| {
+				kind: "research-deep";
+				query: string;
+		  };
+
+export type AnkiCommandParseResult =
 	| {
-			kind: "research-deep";
-			query: string;
+				kind: "none";
+	  }
+	| {
+				kind: "invalid";
+				error: string;
+	  }
+	| {
+				kind: "flashcards" | "quiz";
 	  };
 
 export type AddFilePathMode = "markdown" | "all" | "hierarchy";
@@ -230,6 +242,7 @@ export interface QueryUploadProgress {
 }
 
 export interface QueryProgressState {
+	kind: "query";
 	steps: {
 		search: QueryProgressStepState;
 		upload: QueryProgressStepState;
@@ -240,6 +253,24 @@ export interface QueryProgressState {
 	responseDetail: string;
 	upload: QueryUploadProgress;
 }
+
+export interface AnkiGenerationProgressState {
+	kind: "anki";
+	artifactType: "flashcards" | "quiz";
+	steps: {
+		search: QueryProgressStepState;
+		upload: QueryProgressStepState;
+		generation: QueryProgressStepState;
+		sync: QueryProgressStepState;
+	};
+	searchDetail: string;
+	uploadDetail: string;
+	generationDetail: string;
+	syncDetail: string;
+	upload: QueryUploadProgress;
+}
+
+export type ChatProgressState = QueryProgressState | AnkiGenerationProgressState;
 
 export interface QuerySourceItem {
 	sourceId: string;

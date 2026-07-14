@@ -28,6 +28,8 @@ import {
 	NotebookResearchSourceItem,
 	NotebookResearchStatus,
 	NotebookLMPluginSettings,
+	AnkiGenerationProgressState,
+	ChatProgressState,
 	QueryProgressState,
 	QuerySourceItem,
 	ResearchCommandKind,
@@ -44,6 +46,7 @@ import { NotebookLMSettingTab } from "../ui/SettingsTab";
 import { buildResearchTrackingQuery } from "./researchQuery";
 import { getResearchImportIndices, trackResearchStatus } from "./researchTracking";
 import { isNotebookMissingError } from "./notebookErrors";
+import { generateAndImportToAnki, type AnkiArtifactType } from "../anki/generateAndImport";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -112,6 +115,7 @@ const SETTINGS_LIMITS = {
 } as const;
 
 type QueryStepKey = "search" | "upload" | "response";
+type AnkiProgressStepKey = "search" | "upload" | "generation" | "sync";
 
 type ExplicitUploadPathStatus = "pending" | "checking" | "uploading" | "ready" | "failed";
 
@@ -165,8 +169,8 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private explicitSourceSelectionService!: ExplicitSourceSelectionService;
 	private activeConversationId: string | null = null;
 	private remoteSourceIds = new Set<string>();
-	private queryProgress: QueryProgressState | null = null;
-	private queryProgressListeners = new Set<(progress: QueryProgressState | null) => void>();
+	private queryProgress: ChatProgressState | null = null;
+	private queryProgressListeners = new Set<(progress: ChatProgressState | null) => void>();
 	private explicitUploadQueue: string[] = [];
 	private explicitUploadState = new Map<string, ExplicitUploadPathState>();
 	private explicitUploadStateListeners = new Set<() => void>();
@@ -182,7 +186,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return this.store.getSettings();
 	}
 
-	getQueryProgress(): QueryProgressState | null {
+	getQueryProgress(): ChatProgressState | null {
 		return this.queryProgress;
 	}
 
@@ -198,7 +202,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		await this.store.save();
 	}
 
-	onQueryProgressChange(listener: (progress: QueryProgressState | null) => void): () => void {
+	onQueryProgressChange(listener: (progress: ChatProgressState | null) => void): () => void {
 		this.queryProgressListeners.add(listener);
 		listener(this.queryProgress);
 		return () => {
@@ -797,6 +801,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		let assistantResponse = "";
 		let currentStep: QueryStepKey = "search";
 		let progressState: QueryProgressState = {
+			kind: "query",
 			steps: {
 				search: "active",
 				upload: "pending",
@@ -1156,6 +1161,201 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		}
 	}
 
+	async handleAnkiCommand(
+		type: AnkiArtifactType,
+		options: {
+			explicitSelections: ComposerSelectionItem[];
+			manualSourceIds?: string[];
+		},
+	): Promise<void> {
+		let currentStep: AnkiProgressStepKey = "search";
+		let progressState: AnkiGenerationProgressState = {
+			kind: "anki",
+			artifactType: type,
+			steps: {
+				search: "active",
+				upload: "pending",
+				generation: "pending",
+				sync: "pending",
+			},
+			searchDetail: "Reading the current source selection...",
+			uploadDetail: "Waiting for source selection...",
+			generationDetail: "Waiting for source uploads...",
+			syncDetail: "Waiting for card generation...",
+			upload: {
+				total: 0,
+				currentIndex: 0,
+				currentPath: null,
+				uploadedCount: 0,
+				reusedCount: 0,
+			},
+		};
+		this.setQueryProgress(progressState);
+
+		const updateProgress = (patch: Partial<AnkiGenerationProgressState>): void => {
+			progressState = {
+				...progressState,
+				...patch,
+				steps: patch.steps ?? progressState.steps,
+				upload: patch.upload ?? progressState.upload,
+			};
+			this.setQueryProgress(progressState);
+		};
+
+		try {
+			const explicitSelections = this.normalizeComposerSelections(options.explicitSelections);
+			const explicitPaths = collectExplicitSelectionPaths(explicitSelections);
+			const allowedUploadPathsResult = filterAllowedUploadPaths(explicitPaths);
+			const selectedUploadPaths = allowedUploadPathsResult.allowedPaths;
+			if (allowedUploadPathsResult.ignoredCount > 0) {
+				new Notice(
+					`Ignored ${allowedUploadPathsResult.ignoredCount} file${allowedUploadPathsResult.ignoredCount === 1 ? "" : "s"} due to unallowed extensions ${allowedUploadPathsResult.ignoredExtensions.join(", ")}.`,
+					8000,
+				);
+			}
+			const manualSourceIds = this.normalizeManualSourceIds(options.manualSourceIds ?? [], new Set());
+			if (selectedUploadPaths.length === 0 && manualSourceIds.length === 0) {
+				throw new Error("Select one or more source chips with @ before running an Anki command.");
+			}
+
+			const notebookId = await this.ensureNotebookReady();
+			currentStep = "upload";
+			updateProgress({
+				steps: {
+					search: "done",
+					upload: "active",
+					generation: "pending",
+					sync: "pending",
+				},
+				searchDetail: `Selected ${selectedUploadPaths.length} local source${selectedUploadPaths.length === 1 ? "" : "s"} and ${manualSourceIds.length} current research source${manualSourceIds.length === 1 ? "" : "s"}.`,
+				uploadDetail: `Preparing ${selectedUploadPaths.length} selected document${selectedUploadPaths.length === 1 ? "" : "s"}...`,
+				upload: {
+					total: selectedUploadPaths.length,
+					currentIndex: 0,
+					currentPath: null,
+					uploadedCount: 0,
+					reusedCount: 0,
+				},
+			});
+
+			const uploadedPaths = new Set<string>();
+			const reusedPaths = new Set<string>();
+			if (selectedUploadPaths.length > 0) {
+				await this.waitForExplicitUploads(selectedUploadPaths, (scope) => {
+					uploadedPaths.clear();
+					for (const path of scope.uploadedPaths) {
+						uploadedPaths.add(path);
+					}
+					reusedPaths.clear();
+					for (const path of scope.reusedPaths) {
+						reusedPaths.add(path);
+					}
+					const currentPath = scope.currentPath;
+					const uploadDetail = currentPath
+						? `Preparing (${scope.currentIndex}/${scope.total}): ${currentPath}`
+						: `Prepared ${scope.completed}/${scope.total} selected document${scope.total === 1 ? "" : "s"}.`;
+					updateProgress({
+						uploadDetail,
+						upload: {
+							total: scope.total,
+							currentIndex: currentPath ? scope.currentIndex : scope.completed + scope.failed,
+							currentPath,
+							uploadedCount: uploadedPaths.size,
+							reusedCount: reusedPaths.size,
+						},
+					});
+				});
+			}
+
+			const selectedSourceIds = [
+				...new Set([
+					...selectedUploadPaths
+						.map((path) => this.getPreparedSourceIdForPath(path))
+						.filter((sourceId): sourceId is string => typeof sourceId === "string" && sourceId.length > 0),
+					...manualSourceIds,
+				]),
+			];
+			if (selectedSourceIds.length === 0) {
+				throw new Error("The selected sources could not be prepared for NotebookLM.");
+			}
+
+			currentStep = "generation";
+			updateProgress({
+				steps: {
+					search: "done",
+					upload: "done",
+					generation: "active",
+					sync: "pending",
+				},
+				uploadDetail: `Prepared ${uploadedPaths.size} new source${uploadedPaths.size === 1 ? "" : "s"} and reused ${reusedPaths.size} source${reusedPaths.size === 1 ? "" : "s"}.`,
+				generationDetail: `Generating ${type} from ${selectedSourceIds.length} current source${selectedSourceIds.length === 1 ? "" : "s"}...`,
+				upload: {
+					...progressState.upload,
+					currentPath: null,
+				},
+			});
+
+			const result = await generateAndImportToAnki(notebookId, type, {
+				sourceIds: selectedSourceIds,
+				onProgress: (progress) => {
+					if (progress.phase === "generation") {
+						currentStep = "generation";
+						updateProgress({
+							steps: {
+								search: "done",
+								upload: "done",
+								generation: "active",
+								sync: "pending",
+							},
+							generationDetail: progress.detail,
+						});
+						return;
+					}
+
+					currentStep = "sync";
+					updateProgress({
+						steps: {
+							search: "done",
+							upload: "done",
+							generation: "done",
+							sync: "active",
+						},
+						syncDetail: progress.detail,
+					});
+				},
+			});
+			updateProgress({
+				steps: {
+					search: "done",
+					upload: "done",
+					generation: "done",
+					sync: "done",
+				},
+				syncDetail: `Anki sync verified: ${result.anki.verifiedNotes} card${result.anki.verifiedNotes === 1 ? "" : "s"} in ${result.anki.deck}.`,
+			});
+			new Notice(
+				`Anki ${type} uploaded: ${result.anki.created} created, ${result.anki.skippedDuplicates} duplicate${result.anki.skippedDuplicates === 1 ? "" : "s"} skipped.`,
+				9000,
+			);
+		} catch (error) {
+			const message = getErrorMessage(error);
+			this.logger.error("Anki generation failed", message);
+			new Notice(`Anki generation failed: ${message}`, 12000);
+			updateProgress({
+				steps: {
+					...progressState.steps,
+					[currentStep]: "failed",
+				},
+				searchDetail: currentStep === "search" ? `Failed: ${message}` : progressState.searchDetail,
+				uploadDetail: currentStep === "upload" ? `Failed: ${message}` : progressState.uploadDetail,
+				generationDetail: currentStep === "generation" ? `Failed: ${message}` : progressState.generationDetail,
+				syncDetail: (currentStep as AnkiProgressStepKey) === "sync" ? `Failed: ${message}` : progressState.syncDetail,
+			});
+		} finally {
+			this.setQueryProgress(null);
+		}
+	}
+
 	async setDebugMode(enabled: boolean): Promise<void> {
 		if (this.settings.debugMode === enabled) {
 			return;
@@ -1205,7 +1405,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		await this.store.save();
 	}
 
-	private setQueryProgress(progress: QueryProgressState | null): void {
+	private setQueryProgress(progress: ChatProgressState | null): void {
 		this.queryProgress = progress;
 		for (const listener of this.queryProgressListeners) {
 			try {

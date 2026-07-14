@@ -2,6 +2,19 @@
 
 All notable repository changes are documented here.
 
+## [0.9.0] - 2026-07-14
+
+### Added
+
+- Added `/Anki flashcards` and `/Anki quiz` composer commands that use only the current source chips, create source-grounded NotebookLM artifacts, and import verified `Basic(Front, Back)` cards through AnkiConnect.
+- Added source-selection validation, source-specific generation planning with JSON retry, card artifact polling/download, duplicate-aware Anki import, and post-import note-count verification.
+- Added a four-step Anki progress panel for source selection, source upload, card generation, and Anki synchronization.
+- Added console logging plus Obsidian notices for Anki generation failures, alongside slash-command and generation/import regression tests.
+
+### Changed
+
+- Documented AnkiConnect requirements, privacy boundary, and `/Anki` command usage in English and Korean.
+
 ## [0.8.0] - 2026-07-11
 
 ### Added
