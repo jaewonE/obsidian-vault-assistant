@@ -1098,6 +1098,7 @@ export class ChatView extends ItemView {
 				const runPromise = this.plugin.handleAnkiCommand(parsedAnkiCommand.kind, {
 					explicitSelections,
 					manualSourceIds,
+					commandOptions: parsedAnkiCommand.options,
 				});
 				this.renderMessages();
 				await runPromise;

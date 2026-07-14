@@ -56,6 +56,10 @@ export interface GenerateAndImportOptions {
 	sleep?: (milliseconds: number) => Promise<void>;
 	ankiClient?: AnkiConnectInvoker;
 	onProgress?: (progress: AnkiGenerationProgress) => void;
+	maxCount?: number;
+	invalidSourceRatio?: number;
+	ankiDeck?: string;
+	deckRoot?: string;
 }
 
 export interface AnkiGenerationResult {
@@ -164,6 +168,13 @@ function validateMaxCount(value: unknown): number {
 	return value;
 }
 
+function validateInvalidSourceRatio(value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+		throw new AnkiGenerationError(`invalidSourceRatio must be between 0 and 1; received ${String(value)}.`);
+	}
+	return value;
+}
+
 function normaliseSourceIds(sourceIds: readonly string[]): string[] {
 	const normalised = sourceIds.map((sourceId) => nonEmptyString(sourceId, "source-id"));
 	const unique = [...new Set(normalised)];
@@ -190,16 +201,25 @@ function notebookSourceIds(details: unknown, notebookId: string): string[] {
 	return ids;
 }
 
-function validateCurrentSourceSelection(allSourceIds: string[], requestedSourceIds: string[]): string[] {
+function validateCurrentSourceSelection(
+	allSourceIds: string[],
+	requestedSourceIds: string[],
+	invalidSourceRatioThreshold: number,
+): string[] {
 	const requested = normaliseSourceIds(requestedSourceIds);
 	const known = new Set(allSourceIds);
 	const invalid = requested.filter((sourceId) => !known.has(sourceId));
-	if (invalid.length > 0) {
+	const selected = requested.filter((sourceId) => known.has(sourceId));
+	const invalidSourceRatio = invalid.length / requested.length;
+	if (invalid.length > 0 && invalidSourceRatio >= invalidSourceRatioThreshold) {
 		throw new AnkiGenerationError(
-			`Selected sources are no longer available in NotebookLM: ${invalid.join(", ")}. Re-select the sources and retry.`,
+			`Selected sources are no longer available in NotebookLM: ${invalid.join(", ")} (${(invalidSourceRatio * 100).toFixed(1)}% invalid; allowed below ${(invalidSourceRatioThreshold * 100).toFixed(1)}%). Re-select the sources and retry.`,
 		);
 	}
-	return requested;
+	if (selected.length === 0) {
+		throw new AnkiGenerationError("None of the selected sources are still available in NotebookLM. Re-select the sources and retry.");
+	}
+	return selected;
 }
 
 function boundedString(value: unknown, context: string, minimum: number, maximum: number): string {
@@ -430,7 +450,10 @@ export async function generateAndImportToAnki(
 	const timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000;
 	const sleep = options.sleep ?? ((milliseconds: number) => new Promise<void>((resolvePromise) => window.setTimeout(resolvePromise, milliseconds)));
 	const onProgress = options.onProgress ?? (() => undefined);
-	const maxCount = validateMaxCount(30);
+	const maxCount = validateMaxCount(options.maxCount ?? 30);
+	const invalidSourceRatio = validateInvalidSourceRatio(options.invalidSourceRatio ?? 0.01);
+	const ankiDeck = options.ankiDeck === undefined ? undefined : nonEmptyString(options.ankiDeck, "ankiDeck");
+	const deckRoot = options.deckRoot === undefined ? undefined : nonEmptyString(options.deckRoot, "deckRoot");
 
 	try {
 		onProgress({ phase: "generation", detail: "Checking AnkiConnect before card generation..." });
@@ -440,7 +463,7 @@ export async function generateAndImportToAnki(
 		onProgress({ phase: "generation", detail: "Verifying the current NotebookLM source selection..." });
 		const notebookResponse = await run(["notebook", "get", id, "--json"]);
 		const allSourceIds = notebookSourceIds(parseJsonOutput(notebookResponse.stdout, "nlm notebook get") as NotebookDetails, id);
-		const selectedSourceIds = validateCurrentSourceSelection(allSourceIds, options.sourceIds);
+		const selectedSourceIds = validateCurrentSourceSelection(allSourceIds, options.sourceIds, invalidSourceRatio);
 		const generationPlan = await createGenerationPlan(run, id, artifactType, selectedSourceIds, onProgress);
 		const globalPrompt = formatPromptTemplate(GENERATION_GLOBAL_PROMPT, {
 			artifact_type: artifactType,
@@ -476,7 +499,8 @@ export async function generateAndImportToAnki(
 			]);
 			const data = validateCliJson(JSON.parse(await readFile(outputPath, "utf8")) as unknown, artifactType);
 			const parsed = parseNlmDocument(data, `NotebookLM ${artifactType} artifact ${artifactId}`);
-			const deck = deckForGeneratedPlan(generationPlan.deck_name);
+			const generatedDeck = deckForGeneratedPlan(generationPlan.deck_name);
+			const deck = ankiDeck ?? (deckRoot ? `${deckRoot}::${generatedDeck}` : generatedDeck);
 
 			onProgress({ phase: "sync", detail: `Syncing ${parsed.cards.length} card${parsed.cards.length === 1 ? "" : "s"} to Anki deck ${deck}...` });
 			const anki = await importParsedNlmDocument(ankiClient, parsed, {

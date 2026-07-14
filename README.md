@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.9.0`
+Version: `0.9.1`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -53,6 +53,13 @@ The plugin provides a right-sidebar chat workflow:
   - `/Anki quiz`: create Korean multiple-choice quiz cards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
   - local `@` / `@@` / `$` chips are prepared before generation; active research chips are also included as current sources
   - AnkiConnect is checked before NotebookLM artifact generation; a failed generation is logged to the Obsidian developer console and displayed as a notice
+  - optional arguments follow the artifact type, are whitespace-separated, and support single/double quoted values (for example, `/Anki quiz deck="hello world"`):
+    - `max-counts=<positive integer>` (default `30`); `max-count`, `count`, and `counts` are accepted aliases
+    - `anki-deck=<deck name>` (`deck` alias): use this complete Anki deck name directly
+    - `deck-root=<parent deck>` (`root` alias): prefix the generated deck name as a child deck
+    - `invalid-source-ratio=<0..1 or percent>` (default `0.01`): tolerate stale selected source IDs only below this ratio
+  - one bare number means `max-counts`; one bare string means `deck-root`; exactly one number plus one string supplies both in either order. Bare values are ignored for other shapes.
+  - unknown arguments are ignored. Explicit `key=value` values override bare values, and the final explicit value for the same option wins regardless of alias.
 - `/research` command execution (does not add chat message history entries):
   - `/research <single-http-url>`: add one NotebookLM source via `source_type=url` (works for regular web links and YouTube links)
   - `/research links <url...>`: sequentially add multiple links as NotebookLM sources
@@ -170,7 +177,7 @@ npm test
 6. Optionally add explicit sources via `@` / `@@`, or add a YAML-linked document subtree via `$`, before sending.
 7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, `/research`, `/anki`, and supported subcommands).
 8. Run `/research` commands from the same composer to prepare NotebookLM-only sources without adding chat history messages.
-9. With one or more current source chips selected, run `/Anki flashcards` or `/Anki quiz` to create and verify Anki cards without adding a chat history message.
+9. With one or more current source chips selected, run `/Anki flashcards` or `/Anki quiz` to create and verify Anki cards without adding a chat history message. For example: `/Anki flashcards count=30 deck=root` or `/Anki quiz "Study Deck" 10`.
 10. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
 11. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 

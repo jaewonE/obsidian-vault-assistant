@@ -28,6 +28,7 @@ import {
 	NotebookResearchSourceItem,
 	NotebookResearchStatus,
 	NotebookLMPluginSettings,
+	AnkiCommandOptions,
 	AnkiGenerationProgressState,
 	ChatProgressState,
 	QueryProgressState,
@@ -1166,6 +1167,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		options: {
 			explicitSelections: ComposerSelectionItem[];
 			manualSourceIds?: string[];
+			commandOptions?: AnkiCommandOptions;
 		},
 	): Promise<void> {
 		let currentStep: AnkiProgressStepKey = "search";
@@ -1297,6 +1299,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 			const result = await generateAndImportToAnki(notebookId, type, {
 				sourceIds: selectedSourceIds,
+				maxCount: options.commandOptions?.maxCount,
+				invalidSourceRatio: options.commandOptions?.invalidSourceRatio,
+				ankiDeck: options.commandOptions?.ankiDeck,
+				deckRoot: options.commandOptions?.deckRoot,
 				onProgress: (progress) => {
 					if (progress.phase === "generation") {
 						currentStep = "generation";

@@ -2,6 +2,18 @@
 
 All notable repository changes are documented here.
 
+## [0.9.1] - 2026-07-14
+
+### Added
+
+- Added quoted `key=value` argument parsing for `/Anki flashcards` and `/Anki quiz`, including card counts, direct Anki decks, deck roots, and stale-source ratio controls.
+- Added `count`/`counts`, `deck`, and `root` aliases plus concise positional count/deck-root forms.
+- Added parser and generation regression coverage for aliases, quoted values, positional values, duplicate precedence, quiz counts, deck targeting, and stale-source tolerance.
+
+### Changed
+
+- Explicit Anki arguments now override positional values; the last explicit value for an option wins and unknown arguments remain ignored.
+
 ## [0.9.0] - 2026-07-14
 
 ### Added

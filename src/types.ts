@@ -66,6 +66,13 @@ export type ResearchCommandParseResult =
 				query: string;
 		  };
 
+export interface AnkiCommandOptions {
+	maxCount?: number;
+	invalidSourceRatio?: number;
+	ankiDeck?: string;
+	deckRoot?: string;
+}
+
 export type AnkiCommandParseResult =
 	| {
 				kind: "none";
@@ -76,6 +83,7 @@ export type AnkiCommandParseResult =
 	  }
 	| {
 				kind: "flashcards" | "quiz";
+				options: AnkiCommandOptions;
 	  };
 
 export type AddFilePathMode = "markdown" | "all" | "hierarchy";

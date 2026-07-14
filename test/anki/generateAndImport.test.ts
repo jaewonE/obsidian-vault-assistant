@@ -41,7 +41,10 @@ function fakeRunner(downloaded: unknown, sourceIds = ["source-1", "source-2"]): 
 				return { stdout: `Artifact ID: artifact-${args[0]}`, stderr: "" };
 			}
 			if (args[0] === "studio") {
-				return jsonResult([{ id: "artifact-flashcards", type: "flashcards", status: "completed" }]);
+				return jsonResult([
+					{ id: "artifact-flashcards", type: "flashcards", status: "completed" },
+					{ id: "artifact-quiz", type: "quiz", status: "completed" },
+				]);
 			}
 			if (args[0] === "download") {
 				const outputIndex = args.indexOf("--output");
@@ -127,4 +130,55 @@ test("rejects a source that is no longer selected in the NotebookLM notebook bef
 		AnkiGenerationError,
 	);
 	assert.equal(runner.calls.some((call) => call[0] === "flashcards"), false);
+});
+
+test("applies parsed count and deck options to generation and Anki import", async () => {
+	const runner = fakeRunner({
+		title: "Kafka quiz",
+		questions: [{
+			question: "Kafka는 무엇인가요?",
+			answerOptions: [
+				{ text: "분산 이벤트 스트리밍 플랫폼", isCorrect: true, rationale: "Kafka의 핵심 역할입니다." },
+				{ text: "관계형 데이터베이스", isCorrect: false, rationale: "Kafka는 관계형 DB가 아닙니다." },
+			],
+		}],
+	});
+	const anki = fakeAnkiClient();
+
+	const result = await generateAndImportToAnki("notebook-1", "quiz", {
+		sourceIds: ["source-1"],
+		maxCount: 7,
+		invalidSourceRatio: 0.2,
+		ankiDeck: "Custom Deck",
+		deckRoot: "Ignored Root",
+		run: runner.run,
+		ankiClient: anki.client,
+		sleep: async () => undefined,
+	});
+
+	assert.equal(result.anki.deck, "Custom Deck");
+	const create = runner.calls.find((call) => call[0] === "quiz");
+	assert.ok(create);
+	assert.equal(create[create.indexOf("--count") + 1], "7");
+	assert.match(create[create.indexOf("--focus") + 1], /no more than 7 questions/i);
+});
+
+test("tolerates stale selected sources only below the requested invalid-source-ratio", async () => {
+	const runner = fakeRunner({
+		title: "Kafka flashcards",
+		cards: [{ front: "브로커", back: "Kafka 서버" }],
+	});
+	const anki = fakeAnkiClient();
+
+	const result = await generateAndImportToAnki("notebook-1", "flashcards", {
+		sourceIds: ["source-1", "missing-source"],
+		invalidSourceRatio: 0.6,
+		deckRoot: "Study",
+		run: runner.run,
+		ankiClient: anki.client,
+		sleep: async () => undefined,
+	});
+
+	assert.deepEqual(result.selectedSourceIds, ["source-1"]);
+	assert.equal(result.anki.deck, "Study::kafka-fundamentals");
 });

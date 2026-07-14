@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.9.0`
+Version: `0.9.1`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -45,6 +45,13 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
   - `/Anki quiz`: 현재 composer source chip만 대상으로 한국어 객관식 퀴즈 카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
   - 로컬 `@` / `@@` / `$` chip은 생성 전에 준비하며, 활성 research chip도 현재 소스로 포함
   - NotebookLM artifact 생성 전에 AnkiConnect를 검사하고, 실패 내용은 Obsidian 개발자 콘솔과 알림에 함께 표시
+  - artifact 종류 뒤에 선택 인자를 공백으로 구분해 붙일 수 있고, 작은따옴표/큰따옴표로 묶인 값은 하나의 문자열로 처리(예: `/Anki quiz deck="hello world"`)
+    - `max-counts=<양의 정수>`(기본 `30`): `max-count`, `count`, `counts`도 별칭으로 허용
+    - `anki-deck=<덱 이름>`(`deck` 별칭): 이 전체 Anki 덱 이름을 직접 사용
+    - `deck-root=<상위 덱>`(`root` 별칭): 생성된 덱 이름을 해당 상위 덱의 child deck으로 생성
+    - `invalid-source-ratio=<0..1 또는 백분율>`(기본 `0.01`): 이 비율보다 적은 stale source ID만 무시
+  - key 없는 숫자 한 개는 `max-counts`, 문자열 한 개는 `deck-root`, 숫자 하나와 문자열 하나는 순서와 관계없이 둘 다로 해석합니다. 그 밖의 개수/형태인 단순 값은 무시합니다.
+  - 알 수 없는 인자는 무시합니다. 명시형 `key=value`는 단순 값보다 우선하며, 같은 옵션의 명시형 값이 여러 개면 별칭 여부와 관계없이 마지막 값을 사용합니다.
 - `/research` 명령 실행:
   - URL 또는 YouTube 링크를 NotebookLM 소스로 추가
   - 여러 링크를 순차 추가
@@ -108,7 +115,7 @@ nlm login --check
 6. 필요하면 전송 전에 `@` / `@@`로 명시 소스를 추가하거나 `$`로 YAML 문서 트리를 추가합니다.
 7. 필요하면 `/` command 자동완성(`/source`, `/create`, `/setting`, `/research`, `/anki` 및 하위 명령)을 사용합니다.
 8. `/research` 명령으로 NotebookLM-only 소스를 준비합니다.
-9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 채팅 기록 없이 Anki 카드를 생성하고 검증합니다.
+9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 채팅 기록 없이 Anki 카드를 생성하고 검증합니다. 예: `/Anki flashcards count=30 deck=root`, `/Anki quiz "Study Deck" 10`.
 10. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
 11. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
 
