@@ -2,6 +2,13 @@
 
 All notable repository changes are documented here.
 
+## [0.10.0] - 2026-07-15
+
+### Fixed
+
+- Fixed the `/Anki flashcards` and `/Anki quiz` connection bridge to use Obsidian's CommonJS plugin loader for `requestUrl`, so the AnkiConnect preflight reaches the local service instead of failing on an unresolved dynamic `obsidian` import.
+- Added regression coverage for the AnkiConnect request bridge and its `modelNames` request payload.
+
 ## [0.9.1] - 2026-07-14
 
 ### Added

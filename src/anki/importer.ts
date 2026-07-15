@@ -21,6 +21,24 @@ export interface AnkiConnectAction {
 	version: number;
 }
 
+export interface AnkiConnectRequestUrlOptions {
+	url: string;
+	method: "POST";
+	contentType: "application/json";
+	headers: { "Content-Type": "application/json" };
+	body: string;
+	throw: boolean;
+}
+
+export interface AnkiConnectRequestUrlResponse {
+	status: number;
+	text: string;
+}
+
+export type AnkiConnectRequestUrl = (
+	options: AnkiConnectRequestUrlOptions,
+) => Promise<AnkiConnectRequestUrlResponse>;
+
 interface AnkiConnectEnvelope<T> {
 	error: string | null;
 	result: T;
@@ -192,11 +210,25 @@ export function ankiRequest(action: string, params: JsonObject = {}): AnkiConnec
 	return { action, params, version: ANKI_CONNECT_VERSION };
 }
 
+function resolveObsidianRequestUrl(): AnkiConnectRequestUrl {
+	// The production bundle is CommonJS, so this resolves through Obsidian's
+	// plugin module loader. A native dynamic import("obsidian") is not supported
+	// by that loader and fails before a request can reach AnkiConnect.
+	// eslint-disable-next-line @typescript-eslint/no-require-imports, no-undef -- Obsidian injects this loader-specific CommonJS resolver.
+	const { requestUrl } = require("obsidian") as { requestUrl?: AnkiConnectRequestUrl };
+	if (typeof requestUrl !== "function") {
+		throw new Error("Obsidian requestUrl is unavailable.");
+	}
+	return requestUrl;
+}
+
 export class AnkiConnectClient {
+	constructor(private readonly requestUrlOverride?: AnkiConnectRequestUrl) {}
+
 	async invoke<T>(action: string, params: JsonObject = {}): Promise<T> {
 		let response: { status: number; text: string };
 		try {
-			const { requestUrl } = await import("obsidian");
+			const requestUrl = this.requestUrlOverride ?? resolveObsidianRequestUrl();
 			response = await requestUrl({
 				url: ANKI_CONNECT_URL,
 				method: "POST",
