@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractQueryCitations, getLocalCitationSourceKind } from "../../src/plugin/citations";
+import {
+	extractQueryCitations,
+	getLocalCitationSourceKind,
+	parseCitationMarker,
+} from "../../src/plugin/citations";
 
 test("extracts citation number to source id mappings and evidence passages", () => {
 	const citations = extractQueryCitations({
@@ -60,4 +64,11 @@ test("uses reference entries when a query response omits the citations map", () 
 test("classifies local image citations separately from document citations", () => {
 	assert.equal(getLocalCitationSourceKind("figures/benchmark.PNG"), "image");
 	assert.equal(getLocalCitationSourceKind("notes/benchmark.pdf"), "document");
+});
+
+test("parses one or more citation numbers from a rendered marker", () => {
+	assert.deepEqual(parseCitationMarker("[3]"), [3]);
+	assert.deepEqual(parseCitationMarker("[3,4]"), [3, 4]);
+	assert.deepEqual(parseCitationMarker("[3, 4, 12]"), [3, 4, 12]);
+	assert.deepEqual(parseCitationMarker("[3, source-4]"), []);
 });

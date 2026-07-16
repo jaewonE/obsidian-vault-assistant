@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.11.0`
+Version: `0.11.1`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -22,7 +22,7 @@ The plugin provides a right-sidebar chat workflow:
 - Right sidebar chat view (single-tab operation)
 - User questions in bubbles, NotebookLM answers rendered as markdown
 - Copy icons on each question and answer copy the original message text to the clipboard.
-- NotebookLM answer citations are clickable: each resolved `[N]` citation retains its source ID and cited passage, displays an image, document, or search icon, and opens its mapped source in a new tab.
+- NotebookLM answer citations are clickable: each resolved `[N]` or grouped `[N,M,...]` citation retains its source ID and cited passage, displays an image, document, or search icon, and opens each mapped source in a new tab.
 - Search-source citations open their stored URL in Obsidian's built-in Web viewer.
 - Live 3-step progress UI for questions (search -> upload -> response)
 - Live 4-step progress UI for Anki generation (select -> upload -> generate cards -> synchronize with Anki)

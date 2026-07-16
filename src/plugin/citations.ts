@@ -99,3 +99,20 @@ export function getLocalCitationSourceKind(path: string): CitationSourceKind {
 	const extension = path.split(".").pop()?.trim().toLocaleLowerCase() ?? "";
 	return IMAGE_SOURCE_EXTENSIONS.has(extension) ? "image" : "document";
 }
+
+/**
+ * Parses the citation marker shown inside a NotebookLM answer. NotebookLM
+ * groups multiple sources in one marker (for example, `[3,4]`), so each
+ * number must remain separately actionable in the rendered answer.
+ */
+export function parseCitationMarker(marker: string): number[] {
+	const match = marker.match(/^\[(\d+(?:\s*,\s*\d+)*)\]$/u);
+	if (!match?.[1]) {
+		return [];
+	}
+
+	const citationNumbers = match[1].split(",").map((value) => Number(value.trim()));
+	return citationNumbers.every((citationNumber) => Number.isSafeInteger(citationNumber) && citationNumber > 0)
+		? citationNumbers
+		: [];
+}

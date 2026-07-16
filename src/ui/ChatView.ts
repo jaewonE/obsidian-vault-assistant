@@ -29,6 +29,7 @@ import { parseAnkiCommand } from "./ankiCommands";
 import { ResearchLinksModal } from "./ResearchLinksModal";
 import { DeepResearchReportModal } from "./DeepResearchReportModal";
 import { openInDefaultBrowser } from "./externalBrowser";
+import { parseCitationMarker } from "../plugin/citations";
 
 const FILE_EXTENSION_ICON_BY_NAME: Record<string, string> = {
 	md: "file-text",
@@ -1063,7 +1064,7 @@ export class ChatView extends ItemView {
 
 		for (const textNode of textNodes) {
 			const text = textNode.textContent ?? "";
-			const matches = [...text.matchAll(/\[(\d+)\]/gu)];
+			const matches = [...text.matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/gu)];
 			if (matches.length === 0) {
 				continue;
 			}
@@ -1072,14 +1073,25 @@ export class ChatView extends ItemView {
 			let replaced = false;
 			const replacement = document.createDocumentFragment();
 			for (const match of matches) {
-				const citationNumber = Number(match[1]);
-				const target = citationTargets.get(citationNumber);
+				const citationGroup = match[1];
+				if (!citationGroup) {
+					continue;
+				}
+				const citationNumbers = parseCitationMarker(match[0]);
+				const targets = citationNumbers.map((citationNumber) => citationTargets.get(citationNumber));
 				const matchStart = match.index ?? 0;
-				if (!target) {
+				if (targets.length === 0 || targets.some((target) => !target)) {
 					continue;
 				}
 				replacement.append(document.createTextNode(text.slice(offset, matchStart)));
-				replacement.append(this.createCitationLink(target));
+				if (targets.length === 1) {
+					const target = targets[0];
+					if (target) {
+						replacement.append(this.createCitationLink(target));
+					}
+				} else {
+					replacement.append(this.createCitationGroupLinks(citationGroup, targets));
+				}
 				offset = matchStart + match[0].length;
 				replaced = true;
 			}
@@ -1091,7 +1103,31 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	private createCitationLink(target: CitationTarget): HTMLButtonElement {
+	private createCitationGroupLinks(
+		citationGroup: string,
+		targets: Array<CitationTarget | undefined>,
+	): DocumentFragment {
+		const group = document.createDocumentFragment();
+		group.append(document.createTextNode("["));
+		let offset = 0;
+		const numberMatches = [...citationGroup.matchAll(/\d+/gu)];
+		for (let index = 0; index < numberMatches.length; index += 1) {
+			const match = numberMatches[index];
+			const target = targets[index];
+			if (!match || !target) {
+				continue;
+			}
+			const matchStart = match.index ?? 0;
+			group.append(document.createTextNode(citationGroup.slice(offset, matchStart)));
+			group.append(this.createCitationLink(target, match[0]));
+			offset = matchStart + match[0].length;
+		}
+		group.append(document.createTextNode(citationGroup.slice(offset)));
+		group.append(document.createTextNode("]"));
+		return group;
+	}
+
+	private createCitationLink(target: CitationTarget, label = `[${target.citationNumber}]`): HTMLButtonElement {
 		const sourceLabel = target.kind === "image" ? "image" : target.kind === "search" ? "web" : "document";
 		const buttonEl = document.createElement("button");
 		buttonEl.type = "button";
@@ -1100,7 +1136,7 @@ export class ChatView extends ItemView {
 		buttonEl.setAttribute("title", `Open ${target.title} in a new tab`);
 		const iconEl = buttonEl.createSpan({ cls: "nlm-chat-citation-icon" });
 		setIcon(iconEl, target.kind === "image" ? "image" : target.kind === "search" ? "search" : "file-text");
-		buttonEl.createSpan({ cls: "nlm-chat-citation-label", text: `[${target.citationNumber}]` });
+		buttonEl.createSpan({ cls: "nlm-chat-citation-label", text: label });
 		buttonEl.addEventListener("click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();

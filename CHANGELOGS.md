@@ -2,6 +2,13 @@
 
 All notable repository changes are documented here.
 
+## [0.11.1] - 2026-07-16
+
+### Fixed
+
+- Made grouped NotebookLM citations such as `[3,4]` render each source as a separately clickable image, document, or search citation while preserving the original bracket and comma grouping.
+- Added regression coverage for parsing grouped citation markers.
+
 ## [0.11.0] - 2026-07-16
 
 ### Added

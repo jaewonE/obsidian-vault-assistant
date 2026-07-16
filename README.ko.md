@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.11.0`
+Version: `0.11.1`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -22,7 +22,7 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - 오른쪽 사이드바 채팅 뷰
 - 사용자 질문 말풍선 및 Markdown으로 렌더링되는 NotebookLM 답변
 - 각 질문과 답변의 복사 아이콘으로 원문 메시지 텍스트를 클립보드에 복사
-- NotebookLM 답변의 인용문은 클릭할 수 있습니다. 해석 가능한 각 `[N]` 인용문은 source ID와 NotebookLM이 반환한 인용 구절을 보존하며, 이미지·문서·검색 아이콘과 함께 대응 소스를 새 탭으로 엽니다.
+- NotebookLM 답변의 인용문은 클릭할 수 있습니다. 해석 가능한 각 `[N]` 또는 묶음 `[N,M,...]` 인용문은 source ID와 NotebookLM이 반환한 인용 구절을 보존하며, 이미지·문서·검색 아이콘과 함께 각 대응 소스를 새 탭으로 엽니다.
 - 검색 소스 인용문은 저장된 URL을 Obsidian 내장 Web viewer에서 엽니다.
 - 질문 처리용 검색 -> 업로드 -> 응답 3단계 진행 상태 UI
 - Anki 생성용 소스 선택 -> 업로드 -> 카드 생성 -> Anki 동기화 4단계 진행 상태 UI
@@ -122,7 +122,7 @@ nlm login --check
 9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 Anki 카드를 생성하고 검증합니다. History에는 입력한 명령 원문과 소스·카드 수·덱 결과 요약이 남습니다. 예: `/Anki flashcards count=30 deck=root`, `/Anki quiz "Study Deck" 10`.
 10. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
 11. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
-12. 답변의 이미지·문서·검색 `[N]` 인용문을 클릭하면 대응 소스를 새 탭으로 엽니다. 검색 인용문은 **Web viewer** 코어 플러그인을 활성화해야 합니다.
+12. 답변의 이미지·문서·검색 `[N]` 또는 `[N,M,...]` 인용문을 클릭하면 대응 소스를 새 탭으로 엽니다. 묶음 인용문에서는 각 번호를 독립적으로 클릭할 수 있습니다. 검색 인용문은 **Web viewer** 코어 플러그인을 활성화해야 합니다.
 
 ## 명령과 Hotkeys
 
