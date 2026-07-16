@@ -4,6 +4,7 @@ import test from "node:test";
 import type { AnkiConnectInvoker, JsonObject } from "../../src/anki/importer";
 import {
 	AnkiGenerationError,
+	DEFAULT_ANKI_GENERATION_TIMEOUT_MS,
 	generateAndImportToAnki,
 	type GenerationPlan,
 	type NlmCommandResult,
@@ -22,11 +23,19 @@ function jsonResult(value: unknown): NlmCommandResult {
 	return { stdout: JSON.stringify(value), stderr: "" };
 }
 
-function fakeRunner(downloaded: unknown, sourceIds = ["source-1", "source-2"]): {
+function fakeRunner(
+	downloaded: unknown,
+	sourceIds = ["source-1", "source-2"],
+	studioResponses: unknown[] = [[
+		{ id: "artifact-flashcards", type: "flashcards", status: "completed" },
+		{ id: "artifact-quiz", type: "quiz", status: "completed" },
+	]],
+): {
 	run: (args: string[]) => Promise<NlmCommandResult>;
 	calls: string[][];
 } {
 	const calls: string[][] = [];
+	let studioResponseIndex = 0;
 	return {
 		calls,
 		async run(args) {
@@ -41,10 +50,9 @@ function fakeRunner(downloaded: unknown, sourceIds = ["source-1", "source-2"]): 
 				return { stdout: `Artifact ID: artifact-${args[0]}`, stderr: "" };
 			}
 			if (args[0] === "studio") {
-				return jsonResult([
-					{ id: "artifact-flashcards", type: "flashcards", status: "completed" },
-					{ id: "artifact-quiz", type: "quiz", status: "completed" },
-				]);
+				const response = studioResponses[Math.min(studioResponseIndex, studioResponses.length - 1)];
+				studioResponseIndex += 1;
+				return jsonResult(response);
 			}
 			if (args[0] === "download") {
 				const outputIndex = args.indexOf("--output");
@@ -116,6 +124,40 @@ test("generates flashcards only from the current selected source IDs and verifie
 	]);
 });
 
+test("waits through NotebookLM's not-found and unknown transitional artifact states", async () => {
+	const runner = fakeRunner(
+		{
+			title: "Kafka flashcards",
+			cards: [{ front: "브로커", back: "Kafka 서버" }],
+		},
+		undefined,
+		[
+			[],
+			[{ id: "artifact-flashcards", type: "flashcards", status: "unknown" }],
+			[{ id: "artifact-flashcards", type: "flashcards", status: "completed" }],
+		],
+	);
+	const anki = fakeAnkiClient();
+	const progress: string[] = [];
+
+	const result = await generateAndImportToAnki("notebook-1", "flashcards", {
+		sourceIds: ["source-1"],
+		run: runner.run,
+		ankiClient: anki.client,
+		sleep: async () => undefined,
+		onProgress: (update) => progress.push(update.detail),
+	});
+
+	assert.equal(result.anki.verifiedNotes, 1);
+	assert.ok(progress.some((detail) => detail.includes("(not found)")));
+	assert.ok(progress.some((detail) => detail.includes("(unknown)")));
+	assert.equal(runner.calls.filter((call) => call[0] === "studio").length, 3);
+});
+
+test("allows ten minutes for NotebookLM artifact generation by default", () => {
+	assert.equal(DEFAULT_ANKI_GENERATION_TIMEOUT_MS, 10 * 60 * 1_000);
+});
+
 test("rejects a source that is no longer selected in the NotebookLM notebook before artifact creation", async () => {
 	const runner = fakeRunner({ title: "Unused", cards: [{ front: "F", back: "B" }] }, ["source-1"]);
 	const anki = fakeAnkiClient();
@@ -157,10 +199,16 @@ test("applies parsed count and deck options to generation and Anki import", asyn
 	});
 
 	assert.equal(result.anki.deck, "Custom Deck");
+	const query = runner.calls.find((call) => call[0] === "query");
 	const create = runner.calls.find((call) => call[0] === "quiz");
+	assert.ok(query);
 	assert.ok(create);
 	assert.equal(create[create.indexOf("--count") + 1], "7");
-	assert.match(create[create.indexOf("--focus") + 1], /no more than 7 questions/i);
+	assert.match(query[3] ?? "", /as close to 7 questions as the selected sources support/i);
+	const focus = create[create.indexOf("--focus") + 1] ?? "";
+	assert.match(focus, /as close to 7 questions as possible/i);
+	assert.match(focus, /Korean \(ko-KR\)/i);
+	assert.ok(focus.indexOf(PLAN.make_prompt) < focus.indexOf("Mandatory generation requirements"));
 });
 
 test("tolerates stale selected sources only below the requested invalid-source-ratio", async () => {

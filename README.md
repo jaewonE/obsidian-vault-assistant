@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.10.0`
+Version: `0.10.3`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -52,12 +52,13 @@ The plugin provides a right-sidebar chat workflow:
   - `/Anki flashcards`: create Korean flashcards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
   - `/Anki quiz`: create Korean multiple-choice quiz cards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
   - local `@` / `@@` / `$` chips are prepared before generation; active research chips are also included as current sources
-  - AnkiConnect is checked before NotebookLM artifact generation; a failed generation is logged to the Obsidian developer console and displayed as a notice
+  - AnkiConnect is checked before NotebookLM artifact generation; a failed generation is logged to the Obsidian developer console, displayed as a notice, and retained in the failed progress step with its error detail
   - optional arguments follow the artifact type, are whitespace-separated, and support single/double quoted values (for example, `/Anki quiz deck="hello world"`):
     - `max-counts=<positive integer>` (default `30`); `max-count`, `count`, and `counts` are accepted aliases
     - `anki-deck=<deck name>` (`deck` alias): use this complete Anki deck name directly
     - `deck-root=<parent deck>` (`root` alias): prefix the generated deck name as a child deck
     - `invalid-source-ratio=<0..1 or percent>` (default `0.01`): tolerate stale selected source IDs only below this ratio
+  - `max-counts` is an upper bound: generation is instructed to get as close as possible to it, but source-grounded coverage and non-redundancy take precedence over padding. The quiz CLI also receives the same value through `--count`.
   - one bare number means `max-counts`; one bare string means `deck-root`; exactly one number plus one string supplies both in either order. Bare values are ignored for other shapes.
   - unknown arguments are ignored. Explicit `key=value` values override bare values, and the final explicit value for the same option wins regardless of alias.
 - `/research` command execution (does not add chat message history entries):
@@ -114,13 +115,14 @@ The plugin provides a right-sidebar chat workflow:
   - `notebook_query` tool argument timeout
   - MCP request timeout for NotebookLM calls (with a small buffer)
 - Timeout handling is applied to query, source upload/replacement flow, and startup notebook readiness calls.
+- `/Anki flashcards` and `/Anki quiz` wait up to 10 minutes for the NotebookLM artifact, independently of the normal query timeout, because studio generation can outlast a standard question response.
 - If the stored NotebookLM notebook ID no longer exists, readiness creates and saves a replacement notebook.
 
 ## Requirements
 
 - Obsidian Desktop
 - Node.js 18+
-- Global installation of `notebooklm-mcp-cli`
+- Global installation of `notebooklm-mcp-cli` (the plugin also searches the pipx default `~/.local/bin` location when Obsidian's GUI `PATH` omits it)
 - Anki desktop app with the AnkiConnect add-on enabled, including the standard `Basic` model with `Front` and `Back` fields
 
 Install `notebooklm-mcp-cli` (one option):

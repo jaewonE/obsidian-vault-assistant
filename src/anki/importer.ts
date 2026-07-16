@@ -148,22 +148,22 @@ function parseQuiz(document: JsonObject, sourceName: string): ParsedNlmDocument 
 		}
 
 		const front = [
-			`<b>Q${questionIndex + 1}.</b> ${textToHtml(questionText)}`,
+			`<b>문항 ${questionIndex + 1}.</b> ${textToHtml(questionText)}`,
 			question.hint === undefined
 				? ""
-				: `<br><br><i>Hint:</i> ${textToHtml(expectString(question.hint, `question ${questionIndex + 1}.hint`))}`,
-			"<br><br><b>Choices</b><ol>",
+				: `<br><br><i>힌트:</i> ${textToHtml(expectString(question.hint, `question ${questionIndex + 1}.hint`))}`,
+			"<br><br><b>선택지</b><ol>",
 			...parsedOptions.map(
 				(option, optionIndex) => `<li><b>${optionLabel(optionIndex)}.</b> ${textToHtml(option.text)}</li>`,
 			),
 			"</ol>",
 		].join("");
 		const back = [
-			"<b>Correct answer</b><ul>",
+			"<b>정답</b><ul>",
 			...correct.map(
-				(option) => `<li>${textToHtml(option.text)}<br><i>Explanation:</i> ${textToHtml(option.rationale)}</li>`,
+				(option) => `<li>${textToHtml(option.text)}<br><i>해설:</i> ${textToHtml(option.rationale)}</li>`,
 			),
-			"</ul><hr><b>All choice rationales</b><ol>",
+			"</ul><hr><b>모든 선택지 해설</b><ol>",
 			...parsedOptions.map((option) => {
 				const marker = option.isCorrect ? "✓" : "✗";
 				return `<li><b>${marker} ${textToHtml(option.text)}</b><br>${textToHtml(option.rationale)}</li>`;

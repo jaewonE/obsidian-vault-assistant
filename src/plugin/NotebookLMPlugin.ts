@@ -1343,6 +1343,10 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				`Anki ${type} uploaded: ${result.anki.created} created, ${result.anki.skippedDuplicates} duplicate${result.anki.skippedDuplicates === 1 ? "" : "s"} skipped.`,
 				9000,
 			);
+			// The command has no chat-history entry, so clear a successful progress
+			// panel after its completion notice. Failed panels intentionally remain
+			// visible until the next operation so their diagnostic is not lost.
+			this.setQueryProgress(null);
 		} catch (error) {
 			const message = getErrorMessage(error);
 			this.logger.error("Anki generation failed", message);
@@ -1357,8 +1361,6 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				generationDetail: currentStep === "generation" ? `Failed: ${message}` : progressState.generationDetail,
 				syncDetail: (currentStep as AnkiProgressStepKey) === "sync" ? `Failed: ${message}` : progressState.syncDetail,
 			});
-		} finally {
-			this.setQueryProgress(null);
 		}
 	}
 

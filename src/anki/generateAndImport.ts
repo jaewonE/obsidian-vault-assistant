@@ -22,6 +22,12 @@ const execFileAsync = promisify(execFile);
 
 export type AnkiArtifactType = "quiz" | "flashcards";
 
+/**
+ * NotebookLM can take longer than a normal question response to finish a
+ * quiz or flashcard artifact. Keep this separate from the chat-query timeout.
+ */
+export const DEFAULT_ANKI_GENERATION_TIMEOUT_MS = 10 * 60 * 1_000;
+
 export interface GenerationPlan {
 	main_topic: string;
 	summary: string;
@@ -335,11 +341,14 @@ async function createGenerationPlan(
 	notebookId: string,
 	type: AnkiArtifactType,
 	selectedSourceIds: string[],
+	maxCount: number,
 	onProgress: (progress: AnkiGenerationProgress) => void,
 ): Promise<GenerationPlan> {
 	const sourceScope = `${selectedSourceIds.length} explicitly selected source${selectedSourceIds.length === 1 ? "" : "s"} in the notebook`;
 	const baseQuestion = formatPromptTemplate(GENERATION_PLAN_PROMPT, {
 		artifact_type: type,
+		artifact_label: type === "quiz" ? "questions" : "cards",
+		max_count: String(maxCount),
 		source_scope: sourceScope,
 	});
 	let lastError = "unknown planning response error";
@@ -447,7 +456,7 @@ export async function generateAndImportToAnki(
 	const run = options.run ?? createDefaultRunner(options.nlmBin ?? process.env.NLM_BIN ?? "nlm");
 	const ankiClient = options.ankiClient ?? new AnkiConnectClient();
 	const pollIntervalMs = options.pollIntervalMs ?? 3_000;
-	const timeoutMs = options.timeoutMs ?? 5 * 60 * 1_000;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_ANKI_GENERATION_TIMEOUT_MS;
 	const sleep = options.sleep ?? ((milliseconds: number) => new Promise<void>((resolvePromise) => window.setTimeout(resolvePromise, milliseconds)));
 	const onProgress = options.onProgress ?? (() => undefined);
 	const maxCount = validateMaxCount(options.maxCount ?? 30);
@@ -464,13 +473,13 @@ export async function generateAndImportToAnki(
 		const notebookResponse = await run(["notebook", "get", id, "--json"]);
 		const allSourceIds = notebookSourceIds(parseJsonOutput(notebookResponse.stdout, "nlm notebook get") as NotebookDetails, id);
 		const selectedSourceIds = validateCurrentSourceSelection(allSourceIds, options.sourceIds, invalidSourceRatio);
-		const generationPlan = await createGenerationPlan(run, id, artifactType, selectedSourceIds, onProgress);
+		const generationPlan = await createGenerationPlan(run, id, artifactType, selectedSourceIds, maxCount, onProgress);
 		const globalPrompt = formatPromptTemplate(GENERATION_GLOBAL_PROMPT, {
 			artifact_type: artifactType,
 			artifact_label: artifactType === "quiz" ? "questions" : "cards",
 			max_count: String(maxCount),
 		});
-		const focusPrompt = `${globalPrompt}\n\n--- Source-specific generation instruction ---\n${generationPlan.make_prompt}`;
+		const focusPrompt = `${generationPlan.make_prompt}\n\n--- Mandatory generation requirements ---\n${globalPrompt}`;
 
 		onProgress({ phase: "generation", detail: `Starting NotebookLM ${artifactType} generation...` });
 		const createArgs = [artifactType, "create", id, "--source-ids", selectedSourceIds.join(",")];

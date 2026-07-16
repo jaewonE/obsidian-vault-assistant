@@ -2,6 +2,30 @@
 
 All notable repository changes are documented here.
 
+## [0.10.3] - 2026-07-16
+
+### Fixed
+
+- Strengthened `/Anki quiz` and `/Anki flashcards` generation instructions: Korean (ko-KR) and the count target are now repeated in both the planning query and final focus prompt, with the mandatory contract placed last so a source-specific instruction cannot dilute it.
+- Kept `max-counts` as an upper bound while directing NotebookLM to produce as close to it as possible before stopping for source-grounded coverage or non-redundancy.
+- Localized the fixed quiz-card wrapper labels (question, hint, choices, answer, and rationales) to Korean.
+- Added regression coverage for the target-count prompt contract and Korean quiz-card wrapper labels.
+
+## [0.10.2] - 2026-07-15
+
+### Fixed
+
+- Added the pipx user-local `~/.local/bin` directory to the MCP subprocess environment, so macOS Obsidian GUI sessions can start `notebooklm-mcp` even when their inherited `PATH` omits it.
+- Added regression coverage for the GUI-path fallback and duplicate-path handling.
+
+## [0.10.1] - 2026-07-15
+
+### Fixed
+
+- Extended `/Anki flashcards` and `/Anki quiz` artifact polling from five to ten minutes, allowing NotebookLM studio generations that outlast normal question responses to finish and download.
+- Kept failed Anki progress details visible in the four-step panel and refreshed the chat after the command finishes, so the generic `NotebookLM is working...` placeholder cannot hide the actual error.
+- Added regression coverage for NotebookLM's initial `not found` and `unknown` artifact states during flashcard polling.
+
 ## [0.10.0] - 2026-07-15
 
 ### Fixed

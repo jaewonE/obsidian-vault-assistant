@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.10.0`
+Version: `0.10.3`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -44,12 +44,13 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
   - `/Anki flashcards`: 현재 composer source chip만 대상으로 한국어 플래시카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
   - `/Anki quiz`: 현재 composer source chip만 대상으로 한국어 객관식 퀴즈 카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
   - 로컬 `@` / `@@` / `$` chip은 생성 전에 준비하며, 활성 research chip도 현재 소스로 포함
-  - NotebookLM artifact 생성 전에 AnkiConnect를 검사하고, 실패 내용은 Obsidian 개발자 콘솔과 알림에 함께 표시
+  - NotebookLM artifact 생성 전에 AnkiConnect를 검사하고, 실패 내용은 Obsidian 개발자 콘솔과 알림에 함께 표시하며 실패한 진행 단계에도 오류 상세를 유지
   - artifact 종류 뒤에 선택 인자를 공백으로 구분해 붙일 수 있고, 작은따옴표/큰따옴표로 묶인 값은 하나의 문자열로 처리(예: `/Anki quiz deck="hello world"`)
     - `max-counts=<양의 정수>`(기본 `30`): `max-count`, `count`, `counts`도 별칭으로 허용
     - `anki-deck=<덱 이름>`(`deck` 별칭): 이 전체 Anki 덱 이름을 직접 사용
     - `deck-root=<상위 덱>`(`root` 별칭): 생성된 덱 이름을 해당 상위 덱의 child deck으로 생성
     - `invalid-source-ratio=<0..1 또는 백분율>`(기본 `0.01`): 이 비율보다 적은 stale source ID만 무시
+  - `max-counts`는 상한입니다. 생성 시 이 수에 최대한 가깝게 만들도록 지시하지만, 소스 근거·범위·비반복성이 억지로 수를 채우는 것보다 우선합니다. quiz에는 같은 값이 `--count`로도 전달됩니다.
   - key 없는 숫자 한 개는 `max-counts`, 문자열 한 개는 `deck-root`, 숫자 하나와 문자열 하나는 순서와 관계없이 둘 다로 해석합니다. 그 밖의 개수/형태인 단순 값은 무시합니다.
   - 알 수 없는 인자는 무시합니다. 명시형 `key=value`는 단순 값보다 우선하며, 같은 옵션의 명시형 값이 여러 개면 별칭 여부와 관계없이 마지막 값을 사용합니다.
 - `/research` 명령 실행:
@@ -79,13 +80,14 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - `Query timeout (seconds)` 기본값은 `300`입니다.
 - 이 설정은 NotebookLM 질의 인자와 MCP 요청 timeout에 사용됩니다.
 - timeout 처리는 질의, 소스 업로드/교체, 시작 시 notebook readiness 호출에 적용됩니다.
+- `/Anki flashcards`와 `/Anki quiz`는 일반 질의 timeout과 별개로 NotebookLM artifact 생성을 최대 10분까지 기다립니다. studio 생성은 일반 질문 응답보다 오래 걸릴 수 있습니다.
 - 저장된 NotebookLM notebook ID가 더 이상 존재하지 않으면 readiness 단계에서 새 notebook을 생성하고 저장합니다.
 
 ## 요구사항
 
 - Obsidian Desktop
 - Node.js 18+
-- 전역 설치된 `notebooklm-mcp-cli`
+- 전역 설치된 `notebooklm-mcp-cli`(Obsidian GUI의 `PATH`에 없더라도 pipx 기본 경로인 `~/.local/bin`을 함께 탐색)
 - Anki Desktop 앱, 활성화된 AnkiConnect 애드온, 그리고 `Front`, `Back` 필드만 가진 표준 `Basic` 노트 타입
 
 설치 예시:

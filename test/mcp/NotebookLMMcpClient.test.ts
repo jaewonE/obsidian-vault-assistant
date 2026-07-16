@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { NotebookLMMcpClient } from "../../src/mcp/NotebookLMMcpClient";
+import { buildMcpChildEnvironment, NotebookLMMcpClient } from "../../src/mcp/NotebookLMMcpClient";
 
 class SilentLogger {
 	debug(): void {}
@@ -8,6 +8,26 @@ class SilentLogger {
 	warn(): void {}
 	error(): void {}
 }
+
+test("adds pipx's user-local bin directory to the MCP subprocess PATH", () => {
+	const environment = buildMcpChildEnvironment({
+		HOME: "/Users/tester",
+		PATH: "/usr/local/bin:/usr/bin",
+		KEEP: "value",
+	});
+
+	assert.equal(environment.PATH, "/Users/tester/.local/bin:/usr/local/bin:/usr/bin");
+	assert.equal(environment.KEEP, "value");
+});
+
+test("does not duplicate an existing user-local MCP bin directory", () => {
+	const environment = buildMcpChildEnvironment({
+		HOME: "/Users/tester",
+		PATH: "/Users/tester/.local/bin:/usr/bin",
+	});
+
+	assert.equal(environment.PATH, "/Users/tester/.local/bin:/usr/bin");
+});
 
 test("retries connection issue once for idempotent calls", async () => {
 	const client = new NotebookLMMcpClient(new SilentLogger() as never) as never as {

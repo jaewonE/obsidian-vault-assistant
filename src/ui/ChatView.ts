@@ -1105,6 +1105,11 @@ export class ChatView extends ItemView {
 			} finally {
 				this.setBusy(false);
 				this.renderComposerSelections();
+				// Progress updates render while the command is still busy. Re-render
+				// after clearing busy so a completed command does not leave the generic
+				// "NotebookLM is working..." placeholder behind, and a failed Step 3/4
+				// remains visible with its actual error message.
+				this.renderMessages();
 				this.inputEl.focus();
 			}
 			return;

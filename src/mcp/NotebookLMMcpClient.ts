@@ -1,4 +1,5 @@
 import process from "process";
+import { delimiter, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Logger } from "../logging/logger";
@@ -6,7 +7,7 @@ import { Logger } from "../logging/logger";
 export class NotebookLMMcpBinaryMissingError extends Error {
 	constructor() {
 		super(
-			"Could not find notebooklm-mcp on PATH. Install notebooklm-mcp-cli globally (pip/uv/pipx) and restart Obsidian.",
+			"Could not find notebooklm-mcp on PATH or in ~/.local/bin. Install notebooklm-mcp-cli globally (pip/uv/pipx) and restart Obsidian.",
 		);
 		this.name = "NotebookLMMcpBinaryMissingError";
 	}
@@ -33,6 +34,34 @@ function errorMessage(error: unknown): string {
 		return error.message;
 	}
 	return String(error);
+}
+
+/**
+ * macOS GUI apps often receive a minimal PATH that omits the pipx default
+ * location. Preserve the inherited environment while making the standard
+ * user-local bin directory available to the MCP subprocess.
+ */
+export function buildMcpChildEnvironment(source: Record<string, string | undefined>): Record<string, string> {
+	const environment: Record<string, string> = {};
+	for (const [key, value] of Object.entries(source)) {
+		if (typeof value === "string") {
+			environment[key] = value;
+		}
+	}
+
+	const homeDirectory = environment.HOME;
+	if (!homeDirectory) {
+		return environment;
+	}
+
+	const localBin = join(homeDirectory, ".local", "bin");
+	const existingPaths = (environment.PATH ?? "")
+		.split(delimiter)
+		.filter((pathEntry) => pathEntry.length > 0);
+	if (!existingPaths.includes(localBin)) {
+		environment.PATH = [localBin, ...existingPaths].join(delimiter);
+	}
+	return environment;
 }
 
 export class NotebookLMMcpClient {
@@ -160,12 +189,7 @@ export class NotebookLMMcpClient {
 			args.push("--debug");
 		}
 
-		const env: Record<string, string> = {};
-		for (const [key, value] of Object.entries(process.env)) {
-			if (typeof value === "string") {
-				env[key] = value;
-			}
-		}
+		const env = buildMcpChildEnvironment(process.env);
 
 		const transport = new StdioClientTransport({
 			command: "notebooklm-mcp",
@@ -205,7 +229,11 @@ export class NotebookLMMcpClient {
 			this.scheduleReconnect();
 		};
 
-		this.logger.debug("Starting MCP server subprocess", { command: "notebooklm-mcp", args });
+		this.logger.debug("Starting MCP server subprocess", {
+			command: "notebooklm-mcp",
+			args,
+			pathIncludesUserLocalBin: env.PATH?.split(delimiter).includes(join(env.HOME ?? "", ".local", "bin")),
+		});
 
 		try {
 			await client.connect(transport);
