@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.10.5`
+Version: `0.11.0`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -22,6 +22,8 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - 오른쪽 사이드바 채팅 뷰
 - 사용자 질문 말풍선 및 Markdown으로 렌더링되는 NotebookLM 답변
 - 각 질문과 답변의 복사 아이콘으로 원문 메시지 텍스트를 클립보드에 복사
+- NotebookLM 답변의 인용문은 클릭할 수 있습니다. 해석 가능한 각 `[N]` 인용문은 source ID와 NotebookLM이 반환한 인용 구절을 보존하며, 이미지·문서·검색 아이콘과 함께 대응 소스를 새 탭으로 엽니다.
+- 검색 소스 인용문은 저장된 URL을 Obsidian 내장 Web viewer에서 엽니다.
 - 질문 처리용 검색 -> 업로드 -> 응답 3단계 진행 상태 UI
 - Anki 생성용 소스 선택 -> 업로드 -> 카드 생성 -> Anki 동기화 4단계 진행 상태 UI
 - 질의 처리 중에도 입력, mention 검색, chip 조작, `Search vault` 토글 사용 가능
@@ -85,7 +87,7 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 
 ## 요구사항
 
-- Obsidian Desktop
+- Obsidian Desktop 1.8.0 이상(인용된 검색 소스를 열기 위한 내장 Web viewer 포함)
 - Node.js 18+
 - 전역 설치된 `notebooklm-mcp-cli`(Obsidian GUI의 `PATH`에 없더라도 pipx 기본 경로인 `~/.local/bin`을 함께 탐색)
 - Anki Desktop 앱, 활성화된 AnkiConnect 애드온, 그리고 `Front`, `Back` 필드만 가진 표준 `Basic` 노트 타입
@@ -120,6 +122,7 @@ nlm login --check
 9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 Anki 카드를 생성하고 검증합니다. History에는 입력한 명령 원문과 소스·카드 수·덱 결과 요약이 남습니다. 예: `/Anki flashcards count=30 deck=root`, `/Anki quiz "Study Deck" 10`.
 10. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
 11. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
+12. 답변의 이미지·문서·검색 `[N]` 인용문을 클릭하면 대응 소스를 새 탭으로 엽니다. 검색 인용문은 **Web viewer** 코어 플러그인을 활성화해야 합니다.
 
 ## 명령과 Hotkeys
 
@@ -147,12 +150,12 @@ nlm login --check
 
 - 이 플러그인은 NotebookLM 연동을 위해 로컬에서 실행되는 `notebooklm-mcp-cli` 및 Google NotebookLM에 네트워크 요청을 사용합니다. Anki 업로드는 로컬 AnkiConnect 엔드포인트 `http://127.0.0.1:8765`에만 전송됩니다.
 - vault 외부 파일을 읽지 않습니다.
-- 플러그인 설정, 대화 기록, 소스 메타데이터는 Obsidian 플러그인 데이터(`data.json`)에 저장됩니다.
+- 플러그인 설정, 대화 기록, 소스 메타데이터는 Obsidian 플러그인 데이터(`data.json`)에 저장됩니다. 여기에는 인용 번호와 source ID의 매핑 및 NotebookLM이 반환한 인용 구절도 포함됩니다.
 - raw research source content는 명시적으로 가져오지 않는 한 로컬에 저장하지 않습니다.
 
 ## Desktop support
 
-이 플러그인은 `notebooklm-mcp-cli` 실행 파일, NotebookLM Desktop 연동 흐름, 로컬 AnkiConnect 서비스에 의존하므로 `isDesktopOnly`가 `true`입니다.
+이 플러그인은 `notebooklm-mcp-cli` 실행 파일, NotebookLM Desktop 연동 흐름, 로컬 AnkiConnect 서비스 및 검색 인용문용 Obsidian 데스크톱 Web viewer에 의존하므로 `isDesktopOnly`가 `true`입니다.
 
 ## 개발
 

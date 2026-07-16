@@ -38,6 +38,23 @@ export interface QuerySourceSummary {
 	totalQuerySourceCount: number;
 }
 
+export type CitationSourceKind = "image" | "document" | "search";
+
+export interface QueryCitation {
+	citationNumber: number;
+	sourceId: string;
+	citedText?: string;
+}
+
+export interface CitationTarget {
+	citationNumber: number;
+	sourceId: string;
+	kind: CitationSourceKind;
+	title: string;
+	path?: string;
+	url?: string;
+}
+
 export type ResearchCommandKind = "link" | "links" | "research-fast" | "research-deep";
 
 export type ResearchCommandParseResult =
@@ -137,6 +154,7 @@ export interface ConversationQueryMetadata {
 	selectedSourceIds: string[];
 	evictions: SourceEvictionRecord[];
 	sourceSummary?: QuerySourceSummary;
+	citations?: QueryCitation[];
 	errors?: string[];
 }
 

@@ -12,6 +12,7 @@ import {
 	NotebookLMPluginData,
 	NotebookLMPluginSettings,
 	QuerySourceSummary,
+	QueryCitation,
 	SourceRegistryEntry,
 	SourceSegment,
 } from "../types";
@@ -294,6 +295,32 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 	const evictionsRaw = Array.isArray(value.evictions) ? value.evictions : [];
 	const explicitSelectionsRaw = Array.isArray(value.explicitSelections) ? value.explicitSelections : [];
 	const sourceSummaryRaw = isRecord(value.sourceSummary) ? value.sourceSummary : null;
+	const citationsRaw = Array.isArray(value.citations) ? value.citations : [];
+	const seenCitationNumbers = new Set<number>();
+	const citations = citationsRaw
+		.map((item): QueryCitation | null => {
+			if (!isRecord(item)) {
+				return null;
+			}
+			const citationNumber = getNumber(item.citationNumber);
+			const sourceId = getString(item.sourceId)?.trim();
+			if (
+				citationNumber === undefined ||
+				!Number.isSafeInteger(citationNumber) ||
+				citationNumber < 1 ||
+				!sourceId
+			) {
+				return null;
+			}
+			if (seenCitationNumbers.has(citationNumber)) {
+				return null;
+			}
+			seenCitationNumbers.add(citationNumber);
+			const citedText = getString(item.citedText)?.trim();
+			return { citationNumber, sourceId, citedText: citedText || undefined };
+		})
+		.filter((item): item is QueryCitation => item !== null)
+		.sort((left, right) => left.citationNumber - right.citationNumber);
 	const explicitSelections = explicitSelectionsRaw
 		.map((item) => {
 			if (!isRecord(item)) {
@@ -398,6 +425,7 @@ function normalizeQueryMetadata(value: unknown): ConversationQueryMetadata | nul
 			? value.errors.filter((item): item is string => typeof item === "string")
 			: undefined,
 		sourceSummary,
+		citations: citations.length > 0 ? citations : undefined,
 	};
 }
 

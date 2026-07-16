@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.10.5`
+Version: `0.11.0`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -22,6 +22,8 @@ The plugin provides a right-sidebar chat workflow:
 - Right sidebar chat view (single-tab operation)
 - User questions in bubbles, NotebookLM answers rendered as markdown
 - Copy icons on each question and answer copy the original message text to the clipboard.
+- NotebookLM answer citations are clickable: each resolved `[N]` citation retains its source ID and cited passage, displays an image, document, or search icon, and opens its mapped source in a new tab.
+- Search-source citations open their stored URL in Obsidian's built-in Web viewer.
 - Live 3-step progress UI for questions (search -> upload -> response)
 - Live 4-step progress UI for Anki generation (select -> upload -> generate cards -> synchronize with Anki)
 - During query processing, composer interactions stay enabled (input, mention search, chip actions, `Search vault` toggle); only `Send`, `New`, and `History` are disabled.
@@ -120,7 +122,7 @@ The plugin provides a right-sidebar chat workflow:
 
 ## Requirements
 
-- Obsidian Desktop
+- Obsidian Desktop 1.8.0+ (the built-in Web viewer opens cited search sources)
 - Node.js 18+
 - Global installation of `notebooklm-mcp-cli` (the plugin also searches the pipx default `~/.local/bin` location when Obsidian's GUI `PATH` omits it)
 - Anki desktop app with the AnkiConnect add-on enabled, including the standard `Basic` model with `Front` and `Back` fields
@@ -182,6 +184,7 @@ npm test
 9. With one or more current source chips selected, run `/Anki flashcards` or `/Anki quiz` to create and verify Anki cards. History retains the exact command and its source/card/deck result summary. For example: `/Anki flashcards count=30 deck=root` or `/Anki quiz "Study Deck" 10`.
 10. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
 11. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
+12. Click an answer's image, document, or search `[N]` citation to open the mapped source in a new tab. Search citations require the **Web viewer** core plugin to be enabled.
 
 ## Commands and Hotkeys
 
@@ -209,12 +212,12 @@ No default hotkeys are assigned. Users can assign shortcuts in Obsidian **Settin
 
 - This plugin uses network access through locally installed `notebooklm-mcp-cli` and Google NotebookLM. Anki uploads are sent only to the local AnkiConnect endpoint at `http://127.0.0.1:8765`.
 - It does not read files outside the current vault.
-- Settings, conversation history, and source metadata are stored in the plugin's Obsidian `data.json`.
+- Settings, conversation history, and source metadata are stored in the plugin's Obsidian `data.json`, including citation number-to-source-ID mappings and the cited passages returned by NotebookLM.
 - Raw research source content is not stored locally unless explicitly fetched later.
 
 ## Desktop support
 
-This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` executables, the NotebookLM desktop integration flow, and a local AnkiConnect service.
+This plugin is desktop-only because it depends on local `notebooklm-mcp-cli` executables, the NotebookLM desktop integration flow, a local AnkiConnect service, and Obsidian's desktop Web viewer for search citations.
 
 ## Repository structure
 

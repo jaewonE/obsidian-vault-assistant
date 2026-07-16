@@ -450,6 +450,54 @@ test("normalizes explicit selection metadata in query records", async () => {
 	assert.equal(conversation?.queryMetadata[0]?.sourceSummary?.explicitSelectedCount, 2);
 });
 
+test("persists valid query citations in assistant metadata", async () => {
+	const persistence = new InMemoryPersistence();
+	const at = new Date().toISOString();
+	persistence.data = {
+		settings: {},
+		sourceRegistry: {},
+		bm25Index: null,
+		conversationHistory: [
+			{
+				id: "conv-citations",
+				createdAt: at,
+				updatedAt: at,
+				notebookId: null,
+				messages: [],
+				queryMetadata: [
+					{
+						at,
+						bm25Selection: {
+							query: "q",
+							topN: 15,
+							cutoffRatio: 0.4,
+							minK: 3,
+							top15: [],
+							selected: [],
+						},
+						selectedSourceIds: [],
+						evictions: [],
+						citations: [
+							{ citationNumber: 2, sourceId: "source-image", citedText: "A chart." },
+							{ citationNumber: 1, sourceId: "source-document" },
+							{ citationNumber: 1, sourceId: "duplicate" },
+							{ citationNumber: 0, sourceId: "invalid" },
+						],
+					},
+				],
+			},
+		],
+	};
+
+	const store = new PluginDataStore(persistence);
+	await store.load();
+	const citations = store.getConversationById("conv-citations")?.queryMetadata[0]?.citations;
+	assert.deepEqual(citations, [
+		{ citationNumber: 1, sourceId: "source-document", citedText: undefined },
+		{ citationNumber: 2, sourceId: "source-image", citedText: "A chart." },
+	]);
+});
+
 test("persists research records and resolves by source id", async () => {
 	const persistence = new InMemoryPersistence();
 	const store = new PluginDataStore(persistence);

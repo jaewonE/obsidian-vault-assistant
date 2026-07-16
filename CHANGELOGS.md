@@ -2,6 +2,18 @@
 
 All notable repository changes are documented here.
 
+## [0.11.0] - 2026-07-16
+
+### Added
+
+- Made NotebookLM answer citations clickable. Each `[N]` now preserves the response's citation-number-to-source-ID mapping and cited passage, then opens the exact mapped local image or document in a new Obsidian tab.
+- Added image, document, and search icons before resolved citations. Search citations open their stored source URL in a new Obsidian Web viewer tab.
+- Added citation extraction and persistence regression coverage for direct, wrapped, and reference-only NotebookLM response shapes.
+
+### Changed
+
+- Raised the minimum Obsidian version to 1.8.0 for the built-in Web viewer used by search citations.
+
 ## [0.10.5] - 2026-07-16
 
 ### Fixed

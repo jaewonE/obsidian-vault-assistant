@@ -20,6 +20,7 @@ import {
 	AddFilePathSelectionKind,
 	ComposerSelectionItem,
 	ComposerSelectionUploadStatus,
+	CitationTarget,
 	ConversationQueryMetadata,
 	ConversationRecord,
 	DEFAULT_SETTINGS,
@@ -32,6 +33,7 @@ import {
 	AnkiGenerationProgressState,
 	ChatProgressState,
 	QueryProgressState,
+	QueryCitation,
 	QuerySourceItem,
 	ResearchCommandKind,
 	ResearchCommandParseResult,
@@ -47,6 +49,7 @@ import { NotebookLMSettingTab } from "../ui/SettingsTab";
 import { buildResearchTrackingQuery } from "./researchQuery";
 import { getResearchImportIndices, trackResearchStatus } from "./researchTracking";
 import { isNotebookMissingError } from "./notebookErrors";
+import { extractQueryCitations, getLocalCitationSourceKind } from "./citations";
 import { generateAndImportToAnki, type AnkiArtifactType } from "../anki/generateAndImport";
 import {
 	buildAnkiHistoryFailureMessage,
@@ -331,6 +334,80 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		}
 
 		return items;
+	}
+
+	getCitationTargets(citations: QueryCitation[]): CitationTarget[] {
+		const targets: CitationTarget[] = [];
+		for (const citation of citations) {
+			const resolvedSourceId = this.store.resolveSourceId(citation.sourceId);
+			if (!resolvedSourceId) {
+				continue;
+			}
+
+			const researchRecord = this.store.getResearchRecordBySourceId(resolvedSourceId);
+			if (researchRecord) {
+				const sourceItem = researchRecord.sourceItems.find(
+					(item) => this.store.resolveSourceId(item.sourceId) === resolvedSourceId,
+				);
+				const url = parseHttpUrl(sourceItem?.url);
+				if (!url) {
+					continue;
+				}
+				targets.push({
+					citationNumber: citation.citationNumber,
+					sourceId: resolvedSourceId,
+					kind: "search",
+					title: sourceItem?.title || researchRecord.query,
+					url,
+				});
+				continue;
+			}
+
+			const path = this.store.getSourcePathById(resolvedSourceId);
+			if (!path) {
+				continue;
+			}
+			targets.push({
+				citationNumber: citation.citationNumber,
+				sourceId: resolvedSourceId,
+				kind: getLocalCitationSourceKind(path),
+				title: this.getFileTitleFromPath(path),
+				path,
+			});
+		}
+		return targets;
+	}
+
+	async openCitationTargetInNewTab(target: CitationTarget): Promise<void> {
+		if (target.kind !== "search") {
+			if (target.path) {
+				await this.openSourceInNewTab(target.path);
+			}
+			return;
+		}
+
+		if (!target.url) {
+			new Notice(`No URL is available for cited source: ${target.title}`);
+			return;
+		}
+
+		try {
+			const leaf = this.app.workspace.getLeaf("tab");
+			await leaf.setViewState({
+				type: "webviewer",
+				state: {
+					url: target.url,
+					navigate: true,
+				},
+				active: true,
+			});
+			this.app.workspace.setActiveLeaf(leaf, { focus: true });
+		} catch (error) {
+			new Notice(
+				`Unable to open the cited web source. Enable the Web viewer core plugin and retry: ${getErrorMessage(error)}`,
+				10000,
+			);
+		}
 	}
 
 	getSourceIdsForPaths(paths: string[]): string[] {
@@ -1116,6 +1193,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 
 			const responseText = this.extractAssistantText(queryResult);
 			assistantResponse = responseText.length > 0 ? responseText : "NotebookLM returned an empty response.";
+			queryMetadata.citations = extractQueryCitations(queryResult);
 			const conversationId = this.extractConversationId(queryResult);
 			if (conversationId) {
 				conversation.notebookConversationId = conversationId;

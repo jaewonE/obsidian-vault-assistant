@@ -3,11 +3,13 @@ import type NotebookLMPlugin from "../main";
 import type {
 	AddFilePathSearchItem,
 	ChatProgressState,
+	CitationTarget,
 	ConversationQueryMetadata,
 	ComposerSelectionItem,
 	ComposerSelectionUploadStatus,
 	NotebookResearchSourceItem,
 	QueryProgressStepState,
+	QueryCitation,
 	QuerySourceItem,
 	ResearchOperationView,
 } from "../types";
@@ -1010,6 +1012,7 @@ export class ChatView extends ItemView {
 				});
 				try {
 					await MarkdownRenderer.render(this.app, message.text, bodyEl, "", this);
+					this.renderCitationLinks(bodyEl, queryMetadata?.citations ?? []);
 				} catch {
 					bodyEl.setText(message.text);
 				}
@@ -1035,6 +1038,75 @@ export class ChatView extends ItemView {
 		}
 
 		messageListEl.scrollTop = messageListEl.scrollHeight;
+	}
+
+	private renderCitationLinks(bodyEl: HTMLElement, citations: QueryCitation[]): void {
+		const citationTargets = new Map<number, CitationTarget>(
+			this.plugin
+				.getCitationTargets(citations)
+				.map((target) => [target.citationNumber, target]),
+		);
+		if (citationTargets.size === 0) {
+			return;
+		}
+
+		const textNodes: Text[] = [];
+		const walker = document.createTreeWalker(bodyEl, NodeFilter.SHOW_TEXT);
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			const textNode = node as Text;
+			const parent = textNode.parentElement;
+			if (parent?.closest("a, button, code, pre")) {
+				continue;
+			}
+			textNodes.push(textNode);
+		}
+
+		for (const textNode of textNodes) {
+			const text = textNode.textContent ?? "";
+			const matches = [...text.matchAll(/\[(\d+)\]/gu)];
+			if (matches.length === 0) {
+				continue;
+			}
+
+			let offset = 0;
+			let replaced = false;
+			const replacement = document.createDocumentFragment();
+			for (const match of matches) {
+				const citationNumber = Number(match[1]);
+				const target = citationTargets.get(citationNumber);
+				const matchStart = match.index ?? 0;
+				if (!target) {
+					continue;
+				}
+				replacement.append(document.createTextNode(text.slice(offset, matchStart)));
+				replacement.append(this.createCitationLink(target));
+				offset = matchStart + match[0].length;
+				replaced = true;
+			}
+			if (!replaced) {
+				continue;
+			}
+			replacement.append(document.createTextNode(text.slice(offset)));
+			textNode.replaceWith(replacement);
+		}
+	}
+
+	private createCitationLink(target: CitationTarget): HTMLButtonElement {
+		const sourceLabel = target.kind === "image" ? "image" : target.kind === "search" ? "web" : "document";
+		const buttonEl = document.createElement("button");
+		buttonEl.type = "button";
+		buttonEl.addClass("nlm-chat-citation");
+		buttonEl.setAttribute("aria-label", `Open cited ${sourceLabel} in a new tab: ${target.title}`);
+		buttonEl.setAttribute("title", `Open ${target.title} in a new tab`);
+		const iconEl = buttonEl.createSpan({ cls: "nlm-chat-citation-icon" });
+		setIcon(iconEl, target.kind === "image" ? "image" : target.kind === "search" ? "search" : "file-text");
+		buttonEl.createSpan({ cls: "nlm-chat-citation-label", text: `[${target.citationNumber}]` });
+		buttonEl.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			void this.plugin.openCitationTargetInNewTab(target);
+		});
+		return buttonEl;
 	}
 
 	private renderMessageMeta(

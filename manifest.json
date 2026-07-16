@@ -1,8 +1,8 @@
 {
 	"id": "obsidian-vault-assistant",
 	"name": "Obsidian Vault Assistant",
-	"version": "0.10.5",
-	"minAppVersion": "1.5.0",
+	"version": "0.11.0",
+	"minAppVersion": "1.8.0",
 	"description": "BM25-powered Obsidian chat assistant backed by NotebookLM via notebooklm-mcp-cli.",
 	"author": "jaewone",
 	"isDesktopOnly": true
