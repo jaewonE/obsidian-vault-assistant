@@ -6,6 +6,7 @@ import {
 	ConversationRecord,
 	DEFAULT_PLUGIN_DATA,
 	DEFAULT_SETTINGS,
+	isCitationOpenLocation,
 	NotebookResearchRecord,
 	NotebookResearchSourceItem,
 	NotebookResearchStatus,
@@ -149,6 +150,9 @@ function normalizeSettings(rawSettings: unknown): NotebookLMPluginSettings {
 			SETTINGS_LIMITS.queryTimeoutSeconds.min,
 			SETTINGS_LIMITS.queryTimeoutSeconds.max,
 		),
+		citationOpenLocation: isCitationOpenLocation(rawSettings.citationOpenLocation)
+			? rawSettings.citationOpenLocation
+			: DEFAULT_SETTINGS.citationOpenLocation,
 		searchWithExplicitSelections:
 			getBoolean(rawSettings.searchWithExplicitSelections) ?? DEFAULT_SETTINGS.searchWithExplicitSelections,
 		hierarchicalSelectionEnabled:

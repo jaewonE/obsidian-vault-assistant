@@ -1,6 +1,18 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import {
+	CITATION_OPEN_LOCATIONS,
+	isCitationOpenLocation,
+	type CitationOpenLocation,
+} from "../types";
 import type NotebookLMPlugin from "../main";
 import { normalizeYamlPropertyKey } from "./settingValidation";
+
+const CITATION_OPEN_LOCATION_LABELS: Record<CitationOpenLocation, string> = {
+	"current-tab": "Current tab",
+	"new-tab": "New tab",
+	"right-split": "Right split",
+	"left-split": "Left split",
+};
 
 export class NotebookLMSettingTab extends PluginSettingTab {
 	private readonly plugin: NotebookLMPlugin;
@@ -24,6 +36,25 @@ export class NotebookLMSettingTab extends PluginSettingTab {
 					await this.plugin.setDebugMode(value);
 				}),
 			);
+
+		new Setting(containerEl)
+			.setName("Citation opening")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Open cited source in")
+			.setDesc("Choose where image, document, and search citations open. Right and left split reuse the outermost split pane when two or more panes already exist.")
+			.addDropdown((dropdown) => {
+				for (const location of CITATION_OPEN_LOCATIONS) {
+					dropdown.addOption(location, CITATION_OPEN_LOCATION_LABELS[location]);
+				}
+				dropdown.setValue(this.plugin.settings.citationOpenLocation).onChange(async (value) => {
+					if (!isCitationOpenLocation(value)) {
+						return;
+					}
+					await this.plugin.updateSetting("citationOpenLocation", value);
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Hierarchical source selection")

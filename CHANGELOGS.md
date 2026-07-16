@@ -2,6 +2,20 @@
 
 All notable repository changes are documented here.
 
+## [0.11.3] - 2026-07-16
+
+### Added
+
+- Added a persisted citation-opening setting with Current tab, New tab, Right split, and Left split choices. Right split is the default.
+- When two or more split panes already exist, opening a citation to the right or left adds a tab to the outermost corresponding pane instead of creating another split.
+
+## [0.11.2] - 2026-07-16
+
+### Changed
+
+- Reassigned NotebookLM citation numbers per answer by source rather than by original passage. Multiple passages from one source now share one clickable citation number.
+- Documented the source-level citation-number behavior in English and Korean.
+
 ## [0.11.1] - 2026-07-16
 
 ### Fixed

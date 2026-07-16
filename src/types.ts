@@ -55,6 +55,19 @@ export interface CitationTarget {
 	url?: string;
 }
 
+export const CITATION_OPEN_LOCATIONS = [
+	"current-tab",
+	"new-tab",
+	"right-split",
+	"left-split",
+] as const;
+
+export type CitationOpenLocation = (typeof CITATION_OPEN_LOCATIONS)[number];
+
+export function isCitationOpenLocation(value: unknown): value is CitationOpenLocation {
+	return typeof value === "string" && CITATION_OPEN_LOCATIONS.includes(value as CitationOpenLocation);
+}
+
 export type ResearchCommandKind = "link" | "links" | "research-fast" | "research-deep";
 
 export type ResearchCommandParseResult =
@@ -242,6 +255,7 @@ export interface NotebookLMPluginSettings {
 	bm25k1: number;
 	bm25b: number;
 	queryTimeoutSeconds: number;
+	citationOpenLocation: CitationOpenLocation;
 	searchWithExplicitSelections: boolean;
 	hierarchicalSelectionEnabled: boolean;
 	hierarchicalParentProperty: string;
@@ -342,6 +356,7 @@ export const DEFAULT_SETTINGS: NotebookLMPluginSettings = {
 	bm25k1: 1.2,
 	bm25b: 0.75,
 	queryTimeoutSeconds: 300,
+	citationOpenLocation: "right-split",
 	searchWithExplicitSelections: true,
 	hierarchicalSelectionEnabled: true,
 	hierarchicalParentProperty: "",

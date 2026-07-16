@@ -49,7 +49,8 @@ import { NotebookLMSettingTab } from "../ui/SettingsTab";
 import { buildResearchTrackingQuery } from "./researchQuery";
 import { getResearchImportIndices, trackResearchStatus } from "./researchTracking";
 import { isNotebookMissingError } from "./notebookErrors";
-import { extractQueryCitations, getLocalCitationSourceKind } from "./citations";
+import { extractQueryCitations, getLocalCitationSourceKind, normalizeQueryCitations } from "./citations";
+import { getCitationSplitSide, selectCitationEdgePane, type CitationSplitSide } from "./citationOpenLocation";
 import { generateAndImportToAnki, type AnkiArtifactType } from "../anki/generateAndImport";
 import {
 	buildAnkiHistoryFailureMessage,
@@ -106,7 +107,8 @@ type NumericSettingKey =
 
 type DirectSettingKey =
 	| "hierarchicalSelectionEnabled"
-	| "hierarchicalParentProperty";
+	| "hierarchicalParentProperty"
+	| "citationOpenLocation";
 
 const NOTEBOOK_TITLE = "Obsidian Vault Notebook";
 const PROTECTED_CAPACITY_RATIO = 0.7;
@@ -378,11 +380,16 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		return targets;
 	}
 
-	async openCitationTargetInNewTab(target: CitationTarget): Promise<void> {
+	async openCitationTarget(target: CitationTarget): Promise<void> {
 		if (target.kind !== "search") {
-			if (target.path) {
-				await this.openSourceInNewTab(target.path);
+			if (!target.path) {
+				return;
 			}
+			const file = this.getSourceFile(target.path);
+			if (!file) {
+				return;
+			}
+			await this.openSourceFileInLeaf(file, this.getCitationTargetLeaf());
 			return;
 		}
 
@@ -392,7 +399,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		}
 
 		try {
-			const leaf = this.app.workspace.getLeaf("tab");
+			const leaf = this.getCitationTargetLeaf();
 			await leaf.setViewState({
 				type: "webviewer",
 				state: {
@@ -408,6 +415,54 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				10000,
 			);
 		}
+	}
+
+	private getCitationTargetLeaf(): WorkspaceLeaf {
+		const location = this.settings.citationOpenLocation;
+		if (location === "current-tab") {
+			return this.app.workspace.getMostRecentLeaf() ?? this.app.workspace.getLeaf();
+		}
+		if (location === "new-tab") {
+			return this.app.workspace.getLeaf("tab");
+		}
+
+		const splitSide = getCitationSplitSide(location);
+		if (!splitSide) {
+			return this.app.workspace.getLeaf("tab");
+		}
+
+		const edgeLeaf = this.getCitationSplitEdgeLeaf(splitSide);
+		if (edgeLeaf) {
+			// getLeaf("tab") adds a tab to the most recently active leaf's tab group.
+			this.app.workspace.setActiveLeaf(edgeLeaf, { focus: false });
+			return this.app.workspace.getLeaf("tab");
+		}
+
+		const currentLeaf = this.app.workspace.getMostRecentLeaf();
+		if (currentLeaf) {
+			return this.app.workspace.createLeafBySplit(currentLeaf, "vertical", splitSide === "left");
+		}
+		return this.app.workspace.getLeaf("tab");
+	}
+
+	private getCitationSplitEdgeLeaf(side: CitationSplitSide): WorkspaceLeaf | null {
+		const leafByPane = new Map<WorkspaceLeaf["parent"], { leaf: WorkspaceLeaf; area: number }>();
+		this.app.workspace.iterateRootLeaves((leaf) => {
+			const bounds = leaf.view.containerEl.getBoundingClientRect();
+			const area = bounds.width * bounds.height;
+			const existing = leafByPane.get(leaf.parent);
+			if (!existing || area > existing.area) {
+				leafByPane.set(leaf.parent, { leaf, area });
+			}
+		});
+
+		return selectCitationEdgePane(
+			[...leafByPane.values()].map(({ leaf }) => {
+				const bounds = leaf.view.containerEl.getBoundingClientRect();
+				return { value: leaf, left: bounds.left, right: bounds.right };
+			}),
+			side,
+		);
 	}
 
 	getSourceIdsForPaths(paths: string[]): string[] {
@@ -754,13 +809,24 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	}
 
 	async openSourceInNewTab(path: string): Promise<void> {
+		const file = this.getSourceFile(path);
+		if (!file) {
+			return;
+		}
+		const leaf = this.app.workspace.getLeaf("tab");
+		await this.openSourceFileInLeaf(file, leaf);
+	}
+
+	private getSourceFile(path: string): TFile | null {
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (!(file instanceof TFile)) {
 			new Notice(`Source file not found in vault: ${path}`);
-			return;
+			return null;
 		}
+		return file;
+	}
 
-		const leaf = this.app.workspace.getLeaf("tab");
+	private async openSourceFileInLeaf(file: TFile, leaf: WorkspaceLeaf): Promise<void> {
 		await leaf.openFile(file, { active: true });
 		this.app.workspace.setActiveLeaf(leaf, { focus: true });
 	}
@@ -1192,8 +1258,13 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			}
 
 			const responseText = this.extractAssistantText(queryResult);
-			assistantResponse = responseText.length > 0 ? responseText : "NotebookLM returned an empty response.";
-			queryMetadata.citations = extractQueryCitations(queryResult);
+			const notebookAnswer = responseText.length > 0 ? responseText : "NotebookLM returned an empty response.";
+			const normalizedCitations = normalizeQueryCitations(
+				notebookAnswer,
+				extractQueryCitations(queryResult),
+			);
+			assistantResponse = normalizedCitations.answer;
+			queryMetadata.citations = normalizedCitations.citations;
 			const conversationId = this.extractConversationId(queryResult);
 			if (conversationId) {
 				conversation.notebookConversationId = conversationId;

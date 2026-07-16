@@ -95,15 +95,63 @@ export function extractQueryCitations(toolResult: unknown): QueryCitation[] {
 	return [...citationsByNumber.values()].sort((left, right) => left.citationNumber - right.citationNumber);
 }
 
+/**
+ * Reassigns NotebookLM's passage-based citation numbers to source-based numbers.
+ *
+ * NotebookLM gives every cited passage an index, so one source can appear under
+ * several numbers. The chat UI only opens sources, not individual passages, so
+ * each source receives one stable number for the rendered answer instead.
+ */
+export function normalizeQueryCitations(
+	answer: string,
+	citations: QueryCitation[],
+): { answer: string; citations: QueryCitation[] } {
+	const citationsByNumber = new Map(citations.map((citation) => [citation.citationNumber, citation]));
+	const citationNumberBySourceId = new Map<string, number>();
+	const normalizedCitations: QueryCitation[] = [];
+
+	const normalizedAnswer = answer.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/gu, (marker) => {
+		const originalCitationNumbers = parseCitationMarker(marker);
+		const sourceCitations: QueryCitation[] = [];
+		for (const citationNumber of originalCitationNumbers) {
+			const citation = citationsByNumber.get(citationNumber);
+			if (!citation) {
+				return marker;
+			}
+			sourceCitations.push(citation);
+		}
+
+		const normalizedCitationNumbers: number[] = [];
+		for (const citation of sourceCitations) {
+			let citationNumber = citationNumberBySourceId.get(citation.sourceId);
+			if (!citationNumber) {
+				citationNumber = normalizedCitations.length + 1;
+				citationNumberBySourceId.set(citation.sourceId, citationNumber);
+				normalizedCitations.push({
+					citationNumber,
+					sourceId: citation.sourceId,
+					...(citation.citedText ? { citedText: citation.citedText } : {}),
+				});
+			}
+			if (!normalizedCitationNumbers.includes(citationNumber)) {
+				normalizedCitationNumbers.push(citationNumber);
+			}
+		}
+
+		return `[${normalizedCitationNumbers.join(",")}]`;
+	});
+
+	return { answer: normalizedAnswer, citations: normalizedCitations };
+}
+
 export function getLocalCitationSourceKind(path: string): CitationSourceKind {
 	const extension = path.split(".").pop()?.trim().toLocaleLowerCase() ?? "";
 	return IMAGE_SOURCE_EXTENSIONS.has(extension) ? "image" : "document";
 }
 
 /**
- * Parses the citation marker shown inside a NotebookLM answer. NotebookLM
- * groups multiple sources in one marker (for example, `[3,4]`), so each
- * number must remain separately actionable in the rendered answer.
+ * Parses the source-level citation marker shown inside a rendered answer.
+ * Multiple source numbers can appear in one marker (for example, `[1,2]`).
  */
 export function parseCitationMarker(marker: string): number[] {
 	const match = marker.match(/^\[(\d+(?:\s*,\s*\d+)*)\]$/u);

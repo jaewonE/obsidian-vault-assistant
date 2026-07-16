@@ -268,6 +268,7 @@ test("normalizes out-of-range settings values from persisted data", async () => 
 	assert.equal(settings.bm25k1, 0);
 	assert.equal(settings.bm25b, 0);
 	assert.equal(settings.queryTimeoutSeconds, 5);
+	assert.equal(settings.citationOpenLocation, "right-split");
 	assert.equal(settings.searchWithExplicitSelections, true);
 	assert.equal(settings.hierarchicalSelectionEnabled, true);
 	assert.equal(settings.hierarchicalParentProperty, "parents");
@@ -310,6 +311,26 @@ test("persists explicit-selection BM25 toggle setting", async () => {
 	const reloaded = new PluginDataStore(persistence);
 	await reloaded.load();
 	assert.equal(reloaded.getSettings().searchWithExplicitSelections, false);
+});
+
+test("persists citation opening location and falls back to the right split", async () => {
+	const persistence = new InMemoryPersistence();
+	persistence.data = {
+		settings: { citationOpenLocation: "unknown" },
+		sourceRegistry: {},
+		bm25Index: null,
+		conversationHistory: [],
+	};
+	const store = new PluginDataStore(persistence);
+	await store.load();
+
+	assert.equal(store.getSettings().citationOpenLocation, "right-split");
+	store.updateSettings({ citationOpenLocation: "left-split" });
+	await store.save();
+
+	const reloaded = new PluginDataStore(persistence);
+	await reloaded.load();
+	assert.equal(reloaded.getSettings().citationOpenLocation, "left-split");
 });
 
 test("prunes unreachable aliases while preserving resolvable aliases", async () => {

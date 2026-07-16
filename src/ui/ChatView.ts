@@ -1140,7 +1140,7 @@ export class ChatView extends ItemView {
 		buttonEl.addEventListener("click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
-			void this.plugin.openCitationTargetInNewTab(target);
+			void this.plugin.openCitationTarget(target);
 		});
 		return buttonEl;
 	}

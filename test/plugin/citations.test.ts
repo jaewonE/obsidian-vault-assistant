@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	extractQueryCitations,
 	getLocalCitationSourceKind,
+	normalizeQueryCitations,
 	parseCitationMarker,
 } from "../../src/plugin/citations";
 
@@ -71,4 +72,27 @@ test("parses one or more citation numbers from a rendered marker", () => {
 	assert.deepEqual(parseCitationMarker("[3,4]"), [3, 4]);
 	assert.deepEqual(parseCitationMarker("[3, 4, 12]"), [3, 4, 12]);
 	assert.deepEqual(parseCitationMarker("[3, source-4]"), []);
+});
+
+test("normalizes passage citations to one citation number per source", () => {
+	const normalized = normalizeQueryCitations("First fact [3,4]. Second fact [2]. Repeated fact [4].", [
+		{ citationNumber: 2, sourceId: "source-second", citedText: "Second source evidence." },
+		{ citationNumber: 3, sourceId: "source-first", citedText: "First source evidence A." },
+		{ citationNumber: 4, sourceId: "source-first", citedText: "First source evidence B." },
+	]);
+
+	assert.equal(normalized.answer, "First fact [1]. Second fact [2]. Repeated fact [1].");
+	assert.deepEqual(normalized.citations, [
+		{ citationNumber: 1, sourceId: "source-first", citedText: "First source evidence A." },
+		{ citationNumber: 2, sourceId: "source-second", citedText: "Second source evidence." },
+	]);
+});
+
+test("leaves citation markers with an unmapped number unchanged", () => {
+	const normalized = normalizeQueryCitations("Mapped [3]. Incomplete [3,99].", [
+		{ citationNumber: 3, sourceId: "source-first" },
+	]);
+
+	assert.equal(normalized.answer, "Mapped [1]. Incomplete [3,99].");
+	assert.deepEqual(normalized.citations, [{ citationNumber: 1, sourceId: "source-first" }]);
 });

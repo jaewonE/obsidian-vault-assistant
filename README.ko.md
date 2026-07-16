@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.11.1`
+Version: `0.11.3`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -22,7 +22,8 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - 오른쪽 사이드바 채팅 뷰
 - 사용자 질문 말풍선 및 Markdown으로 렌더링되는 NotebookLM 답변
 - 각 질문과 답변의 복사 아이콘으로 원문 메시지 텍스트를 클립보드에 복사
-- NotebookLM 답변의 인용문은 클릭할 수 있습니다. 해석 가능한 각 `[N]` 또는 묶음 `[N,M,...]` 인용문은 source ID와 NotebookLM이 반환한 인용 구절을 보존하며, 이미지·문서·검색 아이콘과 함께 각 대응 소스를 새 탭으로 엽니다.
+- NotebookLM 답변의 인용문은 클릭할 수 있으며 source 기준으로 정규화됩니다. 답변마다 하나의 source는 하나의 `[N]` 번호만 가지므로, NotebookLM이 같은 source의 여러 구절을 근거로 사용해도 같은 인용 번호로 합쳐집니다. 해석 가능한 `[N]` 또는 묶음 `[N,M,...]` 인용문은 이미지·문서·검색 아이콘과 함께 각 대응 소스를 새 탭으로 엽니다.
+- 인용 source를 여는 위치를 현재 탭, 새 탭, 오른쪽 분할 화면, 왼쪽 분할 화면 중에서 설정할 수 있습니다. 기본값은 오른쪽 분할 화면이며, 이미 분할 화면이 두 개 이상이면 오른쪽/왼쪽 끝 화면에 새 탭으로 엽니다.
 - 검색 소스 인용문은 저장된 URL을 Obsidian 내장 Web viewer에서 엽니다.
 - 질문 처리용 검색 -> 업로드 -> 응답 3단계 진행 상태 UI
 - Anki 생성용 소스 선택 -> 업로드 -> 카드 생성 -> Anki 동기화 4단계 진행 상태 UI
@@ -122,7 +123,7 @@ nlm login --check
 9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 Anki 카드를 생성하고 검증합니다. History에는 입력한 명령 원문과 소스·카드 수·덱 결과 요약이 남습니다. 예: `/Anki flashcards count=30 deck=root`, `/Anki quiz "Study Deck" 10`.
 10. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
 11. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
-12. 답변의 이미지·문서·검색 `[N]` 또는 `[N,M,...]` 인용문을 클릭하면 대응 소스를 새 탭으로 엽니다. 묶음 인용문에서는 각 번호를 독립적으로 클릭할 수 있습니다. 검색 인용문은 **Web viewer** 코어 플러그인을 활성화해야 합니다.
+12. 답변마다 인용 번호를 source 기준으로 재부여합니다. 따라서 NotebookLM이 같은 source의 여러 구절을 근거로 사용해도 source 하나는 항상 하나의 번호만 가집니다. 이미지·문서·검색 `[N]` 또는 `[N,M,...]` 인용문을 클릭하면 설정한 위치에 대응 소스를 엽니다. 묶음 인용문에서는 각 번호를 독립적으로 클릭할 수 있습니다. 검색 인용문은 **Web viewer** 코어 플러그인을 활성화해야 합니다.
 
 ## 명령과 Hotkeys
 
@@ -133,6 +134,9 @@ nlm login --check
 ## 설정
 
 - `Debug mode`
+- Citation opening:
+  - `Open cited source in`: `Current tab`, `New tab`, `Right split`, `Left split` 중 선택(기본값: `Right split`).
+  - 분할 화면이 두 개 이상이면 `Right split`과 `Left split`은 새 분할 화면을 만들지 않고 각각 가장 오른쪽 또는 왼쪽 화면에 새 탭으로 source를 엽니다.
 - `Refresh Auth`
 - Hierarchical source selection:
   - `Enable $ hierarchical selection` (기본값: enabled)
@@ -150,7 +154,7 @@ nlm login --check
 
 - 이 플러그인은 NotebookLM 연동을 위해 로컬에서 실행되는 `notebooklm-mcp-cli` 및 Google NotebookLM에 네트워크 요청을 사용합니다. Anki 업로드는 로컬 AnkiConnect 엔드포인트 `http://127.0.0.1:8765`에만 전송됩니다.
 - vault 외부 파일을 읽지 않습니다.
-- 플러그인 설정, 대화 기록, 소스 메타데이터는 Obsidian 플러그인 데이터(`data.json`)에 저장됩니다. 여기에는 인용 번호와 source ID의 매핑 및 NotebookLM이 반환한 인용 구절도 포함됩니다.
+- 플러그인 설정, 대화 기록, 소스 메타데이터는 Obsidian 플러그인 데이터(`data.json`)에 저장됩니다. 여기에는 source 기준으로 정규화된 인용 번호와 source ID의 매핑 및 NotebookLM이 반환한 인용 구절이 있으면 포함됩니다.
 - raw research source content는 명시적으로 가져오지 않는 한 로컬에 저장하지 않습니다.
 
 ## Desktop support
