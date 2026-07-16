@@ -2,6 +2,20 @@
 
 All notable repository changes are documented here.
 
+## [0.10.5] - 2026-07-16
+
+### Fixed
+
+- Persist `/Anki` work in conversation history: the original composer command is stored as the user message, followed by a Korean success or failure summary that reports the source scope, generated-card count, and Anki deck destination.
+- Added regression coverage for nested-deck, duplicate-aware, and failure history summaries.
+
+## [0.10.4] - 2026-07-16
+
+### Fixed
+
+- Moved NotebookLM MCP startup out of the blocking plugin-load path. The chat view and the rest of Obsidian can load while the connection and notebook refresh run in the background; first use shares the in-flight startup instead of competing with it.
+- Removed the redundant startup `server_info` round trip and limited background notebook readiness requests to 15 seconds. Normal query and source-operation timeouts remain unchanged.
+
 ## [0.10.3] - 2026-07-16
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.10.3`
+Version: `0.10.5`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -40,7 +40,7 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 - composer slash command 자동완성:
   - `/source`, `/create`, `/setting`, `/research`, `/anki`
   - `/source add`, `/source get`, `/research links`, `/research deep`, `/anki flashcards`, `/anki quiz`
-- `/Anki` 명령 실행(채팅 기록 메시지는 추가하지 않음):
+- `/Anki` 명령 실행(명령 원문과 한국어 성공/실패 요약을 채팅 기록에 추가):
   - `/Anki flashcards`: 현재 composer source chip만 대상으로 한국어 플래시카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
   - `/Anki quiz`: 현재 composer source chip만 대상으로 한국어 객관식 퀴즈 카드를 생성한 뒤 Anki `Basic(Front, Back)` 노트로 업로드하고 검증
   - 로컬 `@` / `@@` / `$` chip은 생성 전에 준비하며, 활성 research chip도 현재 소스로 포함
@@ -79,7 +79,7 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
 
 - `Query timeout (seconds)` 기본값은 `300`입니다.
 - 이 설정은 NotebookLM 질의 인자와 MCP 요청 timeout에 사용됩니다.
-- timeout 처리는 질의, 소스 업로드/교체, 시작 시 notebook readiness 호출에 적용됩니다.
+- 질의 timeout은 질의와 소스 업로드/교체 흐름에 적용됩니다. 플러그인 시작 시 NotebookLM MCP 작업은 백그라운드로 시작하며, 별도 15초 요청 제한을 사용하므로 Obsidian의 플러그인 로드 완료를 지연시키지 않습니다.
 - `/Anki flashcards`와 `/Anki quiz`는 일반 질의 timeout과 별개로 NotebookLM artifact 생성을 최대 10분까지 기다립니다. studio 생성은 일반 질문 응답보다 오래 걸릴 수 있습니다.
 - 저장된 NotebookLM notebook ID가 더 이상 존재하지 않으면 readiness 단계에서 새 notebook을 생성하고 저장합니다.
 
@@ -117,7 +117,7 @@ nlm login --check
 6. 필요하면 전송 전에 `@` / `@@`로 명시 소스를 추가하거나 `$`로 YAML 문서 트리를 추가합니다.
 7. 필요하면 `/` command 자동완성(`/source`, `/create`, `/setting`, `/research`, `/anki` 및 하위 명령)을 사용합니다.
 8. `/research` 명령으로 NotebookLM-only 소스를 준비합니다.
-9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 채팅 기록 없이 Anki 카드를 생성하고 검증합니다. 예: `/Anki flashcards count=30 deck=root`, `/Anki quiz "Study Deck" 10`.
+9. 현재 source chip을 하나 이상 선택한 뒤 `/Anki flashcards` 또는 `/Anki quiz`를 실행해 Anki 카드를 생성하고 검증합니다. History에는 입력한 명령 원문과 소스·카드 수·덱 결과 요약이 남습니다. 예: `/Anki flashcards count=30 deck=root`, `/Anki quiz "Study Deck" 10`.
 10. composer 위 chip을 유지하거나 제거해 후속 질의의 source scope를 제어합니다.
 11. `Search vault` 토글로 BM25 포함 여부를 제어합니다.
 

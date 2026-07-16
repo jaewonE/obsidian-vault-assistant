@@ -48,6 +48,10 @@ import { buildResearchTrackingQuery } from "./researchQuery";
 import { getResearchImportIndices, trackResearchStatus } from "./researchTracking";
 import { isNotebookMissingError } from "./notebookErrors";
 import { generateAndImportToAnki, type AnkiArtifactType } from "../anki/generateAndImport";
+import {
+	buildAnkiHistoryFailureMessage,
+	buildAnkiHistorySuccessMessage,
+} from "./ankiHistory";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -105,6 +109,7 @@ const NOTEBOOK_TITLE = "Obsidian Vault Notebook";
 const PROTECTED_CAPACITY_RATIO = 0.7;
 const MAX_REUSABLE_HISTORY_SOURCE_IDS = 40;
 const IMPORTED_SOURCE_VALIDATION_DELAYS_MS = [10_000, 20_000, 30_000] as const;
+const STARTUP_MCP_REQUEST_TIMEOUT_MS = 15_000;
 
 const SETTINGS_LIMITS = {
 	topN: { min: 1, max: 200 },
@@ -168,6 +173,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private bm25!: BM25;
 	private mcpClient!: NotebookLMMcpClient;
 	private explicitSourceSelectionService!: ExplicitSourceSelectionService;
+	private mcpStartupPromise: Promise<void> | null = null;
 	private activeConversationId: string | null = null;
 	private remoteSourceIds = new Set<string>();
 	private queryProgress: ChatProgressState | null = null;
@@ -261,7 +267,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			void this.activateChatView();
 		});
 
-		await this.startMcpServer();
+		void this.beginMcpStartup();
 
 		const latestConversation = this.store.getConversationHistory()[0] ?? null;
 		if (latestConversation) {
@@ -272,6 +278,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.mcpStartupPromise = null;
 		for (const leaf of this.app.workspace.getLeavesOfType(NOTEBOOKLM_CHAT_VIEW_TYPE)) {
 			leaf.detach();
 		}
@@ -1168,8 +1175,15 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			explicitSelections: ComposerSelectionItem[];
 			manualSourceIds?: string[];
 			commandOptions?: AnkiCommandOptions;
+			command?: string;
 		},
 	): Promise<void> {
+		const conversation = this.getActiveConversation();
+		const originalCommand = options.command && options.command.length > 0 ? options.command : `/Anki ${type}`;
+		await this.persistAnkiHistoryMessage(conversation, "user", originalCommand);
+
+		let selectedSourceCount = 0;
+		let selectedSourceTitles: string[] = [];
 		let currentStep: AnkiProgressStepKey = "search";
 		let progressState: AnkiGenerationProgressState = {
 			kind: "anki",
@@ -1216,6 +1230,11 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				);
 			}
 			const manualSourceIds = this.normalizeManualSourceIds(options.manualSourceIds ?? [], new Set());
+			selectedSourceCount = selectedUploadPaths.length + manualSourceIds.length;
+			selectedSourceTitles = [
+				...selectedUploadPaths.map((path) => this.getFileTitleFromPath(path)),
+				...this.getSourceItemsForIds(manualSourceIds).map((item) => item.title),
+			];
 			if (selectedUploadPaths.length === 0 && manualSourceIds.length === 0) {
 				throw new Error("Select one or more source chips with @ before running an Anki command.");
 			}
@@ -1280,6 +1299,8 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 			if (selectedSourceIds.length === 0) {
 				throw new Error("The selected sources could not be prepared for NotebookLM.");
 			}
+			selectedSourceCount = selectedSourceIds.length;
+			selectedSourceTitles = this.getSourceItemsForIds(selectedSourceIds).map((item) => item.title);
 
 			currentStep = "generation";
 			updateProgress({
@@ -1343,13 +1364,35 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				`Anki ${type} uploaded: ${result.anki.created} created, ${result.anki.skippedDuplicates} duplicate${result.anki.skippedDuplicates === 1 ? "" : "s"} skipped.`,
 				9000,
 			);
-			// The command has no chat-history entry, so clear a successful progress
-			// panel after its completion notice. Failed panels intentionally remain
-			// visible until the next operation so their diagnostic is not lost.
+			await this.persistAnkiHistoryMessage(
+				conversation,
+				"assistant",
+				buildAnkiHistorySuccessMessage({
+					type,
+					sourceTitles: selectedSourceTitles,
+					sourceCount: selectedSourceCount,
+					generatedCards: result.anki.cards,
+					createdCards: result.anki.created,
+					skippedDuplicates: result.anki.skippedDuplicates,
+					deck: result.anki.deck,
+				}),
+			);
+			// Failed panels intentionally remain visible until the next operation so
+			// their diagnostic is not lost.
 			this.setQueryProgress(null);
 		} catch (error) {
 			const message = getErrorMessage(error);
 			this.logger.error("Anki generation failed", message);
+			await this.persistAnkiHistoryMessage(
+				conversation,
+				"assistant",
+				buildAnkiHistoryFailureMessage({
+					type,
+					sourceTitles: selectedSourceTitles,
+					sourceCount: selectedSourceCount,
+					error: message,
+				}),
+			);
 			new Notice(`Anki generation failed: ${message}`, 12000);
 			updateProgress({
 				steps: {
@@ -1361,6 +1404,23 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 				generationDetail: currentStep === "generation" ? `Failed: ${message}` : progressState.generationDetail,
 				syncDetail: (currentStep as AnkiProgressStepKey) === "sync" ? `Failed: ${message}` : progressState.syncDetail,
 			});
+		}
+	}
+
+	private async persistAnkiHistoryMessage(
+		conversation: ConversationRecord,
+		role: "user" | "assistant",
+		text: string,
+	): Promise<void> {
+		const at = new Date().toISOString();
+		conversation.messages.push({ role, text, at });
+		conversation.updatedAt = at;
+		conversation.notebookId = this.settings.notebookId;
+		this.store.saveConversation(conversation);
+		try {
+			await this.store.save();
+		} catch (error) {
+			this.logger.warn("Failed to persist Anki conversation history", getErrorMessage(error));
 		}
 	}
 
@@ -1427,11 +1487,7 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	private async startMcpServer(): Promise<void> {
 		try {
 			await this.ensureMcpConnected();
-			await this.mcpClient.callTool<JsonObject>("server_info", {}, {
-				idempotent: true,
-				requestTimeoutMs: this.getSafeMcpRequestTimeoutMs(),
-			});
-			await this.ensureNotebookReady();
+			await this.ensureNotebookReadyInternal(STARTUP_MCP_REQUEST_TIMEOUT_MS);
 		} catch (error) {
 			if (error instanceof NotebookLMMcpBinaryMissingError) {
 				new Notice(
@@ -1450,6 +1506,21 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 		}
 	}
 
+	private beginMcpStartup(): Promise<void> {
+		if (this.mcpStartupPromise) {
+			return this.mcpStartupPromise;
+		}
+
+		const startupPromise = this.startMcpServer();
+		this.mcpStartupPromise = startupPromise;
+		void startupPromise.finally(() => {
+			if (this.mcpStartupPromise === startupPromise) {
+				this.mcpStartupPromise = null;
+			}
+		});
+		return startupPromise;
+	}
+
 	private async ensureMcpConnected(): Promise<void> {
 		if (this.mcpClient.isConnected()) {
 			return;
@@ -1459,8 +1530,15 @@ export default class NotebookLMObsidianPlugin extends Plugin {
 	}
 
 	private async ensureNotebookReady(): Promise<string> {
+		const startupPromise = this.mcpStartupPromise;
+		if (startupPromise) {
+			await startupPromise;
+		}
+		return this.ensureNotebookReadyInternal(this.getSafeMcpRequestTimeoutMs());
+	}
+
+	private async ensureNotebookReadyInternal(mcpRequestTimeoutMs: number): Promise<string> {
 		await this.ensureMcpConnected();
-		const mcpRequestTimeoutMs = this.getSafeMcpRequestTimeoutMs();
 
 		let notebookId = this.settings.notebookId;
 		if (notebookId) {

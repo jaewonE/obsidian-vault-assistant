@@ -1099,6 +1099,7 @@ export class ChatView extends ItemView {
 					explicitSelections,
 					manualSourceIds,
 					commandOptions: parsedAnkiCommand.options,
+					command: rawQuery,
 				});
 				this.renderMessages();
 				await runPromise;

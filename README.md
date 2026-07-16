@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.10.3`
+Version: `0.10.5`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -48,7 +48,7 @@ The plugin provides a right-sidebar chat workflow:
   - pressing `Enter` with an active suggestion autocompletes to the selected command text instead of sending
   - when no command matches (for example `/source edit`), the suggestion panel is hidden and `Enter` performs normal query send
   - slash command rows are rendered with a distinct command-style background pill in the suggestion list
-- `/Anki` command execution (does not add chat message history entries):
+- `/Anki` command execution (records the original command plus a Korean success/failure summary in chat history):
   - `/Anki flashcards`: create Korean flashcards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
   - `/Anki quiz`: create Korean multiple-choice quiz cards from the current composer source chips, then upload and verify them as Anki `Basic(Front, Back)` notes
   - local `@` / `@@` / `$` chips are prepared before generation; active research chips are also included as current sources
@@ -114,7 +114,7 @@ The plugin provides a right-sidebar chat workflow:
 - This setting is used for:
   - `notebook_query` tool argument timeout
   - MCP request timeout for NotebookLM calls (with a small buffer)
-- Timeout handling is applied to query, source upload/replacement flow, and startup notebook readiness calls.
+- Query-timeout handling is applied to query and source upload/replacement flows. Plugin startup starts NotebookLM MCP work in the background, uses a separate 15-second request limit, and does not delay Obsidian's plugin-load completion.
 - `/Anki flashcards` and `/Anki quiz` wait up to 10 minutes for the NotebookLM artifact, independently of the normal query timeout, because studio generation can outlast a standard question response.
 - If the stored NotebookLM notebook ID no longer exists, readiness creates and saves a replacement notebook.
 
@@ -179,7 +179,7 @@ npm test
 6. Optionally add explicit sources via `@` / `@@`, or add a YAML-linked document subtree via `$`, before sending.
 7. Optionally use `/` command autocomplete in the composer (`/source`, `/create`, `/setting`, `/research`, `/anki`, and supported subcommands).
 8. Run `/research` commands from the same composer to prepare NotebookLM-only sources without adding chat history messages.
-9. With one or more current source chips selected, run `/Anki flashcards` or `/Anki quiz` to create and verify Anki cards without adding a chat history message. For example: `/Anki flashcards count=30 deck=root` or `/Anki quiz "Study Deck" 10`.
+9. With one or more current source chips selected, run `/Anki flashcards` or `/Anki quiz` to create and verify Anki cards. History retains the exact command and its source/card/deck result summary. For example: `/Anki flashcards count=30 deck=root` or `/Anki quiz "Study Deck" 10`.
 10. Keep or remove chips above the composer to control carried source scope (`x` excludes removed items from subsequent query `source_ids`).
 11. Use `Search vault` toggle to include/exclude BM25 for the current and subsequent queries.
 
