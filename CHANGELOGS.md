@@ -2,6 +2,13 @@
 
 All notable repository changes are documented here.
 
+## [0.11.4] - 2026-07-16
+
+### Changed
+
+- Made a positional `/Anki` deck string a direct `anki-deck` instead of a generated-deck root; explicit `root`/`deck-root` behavior remains available.
+- Added `root-deck` as a `deck-root` alias and made dotted `anki-deck` and root paths hierarchical Anki deck paths (for example, `DE.kafka` becomes `DE::kafka`). Root paths continue to append NotebookLM's generated deck name.
+
 ## [0.11.3] - 2026-07-16
 
 ### Added

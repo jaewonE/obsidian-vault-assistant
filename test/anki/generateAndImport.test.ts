@@ -174,7 +174,7 @@ test("rejects a source that is no longer selected in the NotebookLM notebook bef
 	assert.equal(runner.calls.some((call) => call[0] === "flashcards"), false);
 });
 
-test("applies parsed count and deck options to generation and Anki import", async () => {
+test("uses a direct dotted deck path over a root deck during Anki import", async () => {
 	const runner = fakeRunner({
 		title: "Kafka quiz",
 		questions: [{
@@ -191,14 +191,14 @@ test("applies parsed count and deck options to generation and Anki import", asyn
 		sourceIds: ["source-1"],
 		maxCount: 7,
 		invalidSourceRatio: 0.2,
-		ankiDeck: "Custom Deck",
+		ankiDeck: "DE.kafka",
 		deckRoot: "Ignored Root",
 		run: runner.run,
 		ankiClient: anki.client,
 		sleep: async () => undefined,
 	});
 
-	assert.equal(result.anki.deck, "Custom Deck");
+	assert.equal(result.anki.deck, "DE::kafka");
 	const query = runner.calls.find((call) => call[0] === "query");
 	const create = runner.calls.find((call) => call[0] === "quiz");
 	assert.ok(query);
@@ -221,12 +221,12 @@ test("tolerates stale selected sources only below the requested invalid-source-r
 	const result = await generateAndImportToAnki("notebook-1", "flashcards", {
 		sourceIds: ["source-1", "missing-source"],
 		invalidSourceRatio: 0.6,
-		deckRoot: "Study",
+		deckRoot: "DE.kafka",
 		run: runner.run,
 		ankiClient: anki.client,
 		sleep: async () => undefined,
 	});
 
 	assert.deepEqual(result.selectedSourceIds, ["source-1"]);
-	assert.equal(result.anki.deck, "Study::kafka-fundamentals");
+	assert.equal(result.anki.deck, "DE::kafka::kafka-fundamentals");
 });

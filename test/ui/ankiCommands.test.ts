@@ -26,25 +26,37 @@ test("parses named Anki options, aliases, and quoted values", () => {
 	});
 });
 
-test("maps one or two positional Anki values after excluding key-value pairs", () => {
+test("maps one or two positional Anki values to a direct deck after excluding key-value pairs", () => {
 	assert.deepEqual(parseAnkiCommand("/Anki flashcards 10"), {
 		kind: "flashcards",
 		options: { maxCount: 10 },
 	});
 	assert.deepEqual(parseAnkiCommand("/Anki flashcards hello"), {
 		kind: "flashcards",
-		options: { deckRoot: "hello" },
+		options: { ankiDeck: "hello" },
 	});
 	assert.deepEqual(parseAnkiCommand("/Anki quiz hello 10 invalid-source-ratio=0.1"), {
 		kind: "quiz",
-		options: { maxCount: 10, deckRoot: "hello", invalidSourceRatio: 0.1 },
+		options: { maxCount: 10, ankiDeck: "hello", invalidSourceRatio: 0.1 },
+	});
+	assert.deepEqual(parseAnkiCommand("/anki quiz 30 DE.kafka"), {
+		kind: "quiz",
+		options: { maxCount: 30, ankiDeck: "DE.kafka" },
 	});
 });
 
 test("uses explicit values over positional values and the last named alias", () => {
 	assert.deepEqual(parseAnkiCommand("/Anki flashcards deck-root=hello world root=everyone 10 count=20"), {
 		kind: "flashcards",
-		options: { maxCount: 20, deckRoot: "everyone" },
+		options: { maxCount: 20, ankiDeck: "world", deckRoot: "everyone" },
+	});
+	assert.deepEqual(parseAnkiCommand("/Anki quiz root-deck=DE.kafka"), {
+		kind: "quiz",
+		options: { deckRoot: "DE.kafka" },
+	});
+	assert.deepEqual(parseAnkiCommand("/Anki quiz root=DE.kafka"), {
+		kind: "quiz",
+		options: { deckRoot: "DE.kafka" },
 	});
 	assert.deepEqual(parseAnkiCommand("/Anki quiz max-count=8 count=12"), {
 		kind: "quiz",

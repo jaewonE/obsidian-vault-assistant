@@ -113,6 +113,7 @@ function parseAnkiOptions(tokens: string[]): AnkiCommandOptions | { error: strin
 				named.ankiDeck = value;
 				break;
 			case "deck-root":
+			case "root-deck":
 			case "root":
 				if (value.length === 0) {
 					return { error: `${key} must not be empty.` };
@@ -130,7 +131,7 @@ function parseAnkiOptions(tokens: string[]): AnkiCommandOptions | { error: strin
 		const onlyBare = bare[0];
 		const maxCount = parsePositiveInteger(onlyBare);
 		if (maxCount === null) {
-			positional.deckRoot = onlyBare;
+			positional.ankiDeck = onlyBare;
 		} else {
 			positional.maxCount = maxCount;
 		}
@@ -141,7 +142,7 @@ function parseAnkiOptions(tokens: string[]): AnkiCommandOptions | { error: strin
 		const secondMaxCount = parsePositiveInteger(secondBare);
 		if ((firstMaxCount === null) !== (secondMaxCount === null)) {
 			positional.maxCount = firstMaxCount ?? secondMaxCount ?? undefined;
-			positional.deckRoot = firstMaxCount === null ? firstBare : secondBare;
+			positional.ankiDeck = firstMaxCount === null ? firstBare : secondBare;
 		}
 	}
 

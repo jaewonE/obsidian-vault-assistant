@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.11.3`
+Version: `0.11.4`
 
 Obsidian Desktop community plugin that integrates with Google NotebookLM through globally installed `notebooklm-mcp-cli` executables:
 
@@ -58,11 +58,11 @@ The plugin provides a right-sidebar chat workflow:
   - AnkiConnect is checked before NotebookLM artifact generation; a failed generation is logged to the Obsidian developer console, displayed as a notice, and retained in the failed progress step with its error detail
   - optional arguments follow the artifact type, are whitespace-separated, and support single/double quoted values (for example, `/Anki quiz deck="hello world"`):
     - `max-counts=<positive integer>` (default `30`); `max-count`, `count`, and `counts` are accepted aliases
-    - `anki-deck=<deck name>` (`deck` alias): use this complete Anki deck name directly
-    - `deck-root=<parent deck>` (`root` alias): prefix the generated deck name as a child deck
+    - `anki-deck=<deck name>` (`deck` alias): use this complete Anki deck name directly. Dots express hierarchy, so `anki-deck=DE.kafka` creates `DE::kafka`.
+    - `deck-root=<parent deck>` (`root-deck` and `root` aliases): prefix the generated deck name as a child deck. Dots express hierarchy, so `root=DE.kafka` creates under `DE::kafka::<NotebookLM generated deck name>`.
     - `invalid-source-ratio=<0..1 or percent>` (default `0.01`): tolerate stale selected source IDs only below this ratio
   - `max-counts` is an upper bound: generation is instructed to get as close as possible to it, but source-grounded coverage and non-redundancy take precedence over padding. The quiz CLI also receives the same value through `--count`.
-  - one bare number means `max-counts`; one bare string means `deck-root`; exactly one number plus one string supplies both in either order. Bare values are ignored for other shapes.
+  - one bare number means `max-counts`; one bare string means `anki-deck`; exactly one number plus one string supplies both in either order. For example, `/Anki quiz 30 DE.kafka` imports at most 30 quiz cards to `DE::kafka`. Bare values are ignored for other shapes.
   - unknown arguments are ignored. Explicit `key=value` values override bare values, and the final explicit value for the same option wins regardless of alias.
 - `/research` command execution (does not add chat message history entries):
   - `/research <single-http-url>`: add one NotebookLM source via `source_type=url` (works for regular web links and YouTube links)

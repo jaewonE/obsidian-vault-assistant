@@ -2,7 +2,7 @@
 
 [ [English](https://github.com/jaewonE/obsidian-vault-assistant) | [한국어](https://github.com/jaewonE/obsidian-vault-assistant/blob/master/README.ko.md) ]
 
-Version: `0.11.3`
+Version: `0.11.4`
 
 Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-mcp-cli` 실행 파일을 통해 Google NotebookLM과 연동합니다.
 
@@ -50,11 +50,11 @@ Obsidian Desktop 커뮤니티 플러그인으로, 전역 설치된 `notebooklm-m
   - NotebookLM artifact 생성 전에 AnkiConnect를 검사하고, 실패 내용은 Obsidian 개발자 콘솔과 알림에 함께 표시하며 실패한 진행 단계에도 오류 상세를 유지
   - artifact 종류 뒤에 선택 인자를 공백으로 구분해 붙일 수 있고, 작은따옴표/큰따옴표로 묶인 값은 하나의 문자열로 처리(예: `/Anki quiz deck="hello world"`)
     - `max-counts=<양의 정수>`(기본 `30`): `max-count`, `count`, `counts`도 별칭으로 허용
-    - `anki-deck=<덱 이름>`(`deck` 별칭): 이 전체 Anki 덱 이름을 직접 사용
-    - `deck-root=<상위 덱>`(`root` 별칭): 생성된 덱 이름을 해당 상위 덱의 child deck으로 생성
+    - `anki-deck=<덱 이름>`(`deck` 별칭): 이 전체 Anki 덱 이름을 직접 사용. `.`은 계층 구분자이므로 `anki-deck=DE.kafka`는 `DE::kafka` 덱에 생성
+    - `deck-root=<상위 덱>`(`root-deck`, `root` 별칭): 생성된 덱 이름을 해당 상위 덱의 child deck으로 생성. `.`은 계층 구분자이므로 `root=DE.kafka`는 `DE::kafka::<NotebookLM이 생성한 덱 이름>` 하위에 생성
     - `invalid-source-ratio=<0..1 또는 백분율>`(기본 `0.01`): 이 비율보다 적은 stale source ID만 무시
   - `max-counts`는 상한입니다. 생성 시 이 수에 최대한 가깝게 만들도록 지시하지만, 소스 근거·범위·비반복성이 억지로 수를 채우는 것보다 우선합니다. quiz에는 같은 값이 `--count`로도 전달됩니다.
-  - key 없는 숫자 한 개는 `max-counts`, 문자열 한 개는 `deck-root`, 숫자 하나와 문자열 하나는 순서와 관계없이 둘 다로 해석합니다. 그 밖의 개수/형태인 단순 값은 무시합니다.
+  - key 없는 숫자 한 개는 `max-counts`, 문자열 한 개는 `anki-deck`, 숫자 하나와 문자열 하나는 순서와 관계없이 둘 다로 해석합니다. 예를 들어 `/Anki quiz 30 DE.kafka`는 최대 30개의 quiz를 `DE::kafka` 덱에 등록합니다. 그 밖의 개수/형태인 단순 값은 무시합니다.
   - 알 수 없는 인자는 무시합니다. 명시형 `key=value`는 단순 값보다 우선하며, 같은 옵션의 명시형 값이 여러 개면 별칭 여부와 관계없이 마지막 값을 사용합니다.
 - `/research` 명령 실행:
   - URL 또는 YouTube 링크를 NotebookLM 소스로 추가

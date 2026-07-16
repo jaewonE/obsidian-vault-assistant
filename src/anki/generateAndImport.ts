@@ -102,6 +102,22 @@ function nonEmptyString(value: unknown, context: string): string {
 	return value.trim();
 }
 
+/**
+ * The command accepts dots as a concise hierarchy notation while preserving
+ * Anki's native :: notation for existing users. An empty segment would create
+ * an ambiguous hierarchy, so reject it instead of silently changing a deck.
+ */
+function normaliseAnkiDeckPath(value: string, context: string): string {
+	const segments = value
+		.normalize("NFKC")
+		.split(/::|\./u)
+		.map((segment) => segment.trim());
+	if (segments.some((segment) => segment.length === 0)) {
+		throw new AnkiGenerationError(`${context} must not contain empty deck hierarchy segments.`);
+	}
+	return segments.join("::");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -461,8 +477,12 @@ export async function generateAndImportToAnki(
 	const onProgress = options.onProgress ?? (() => undefined);
 	const maxCount = validateMaxCount(options.maxCount ?? 30);
 	const invalidSourceRatio = validateInvalidSourceRatio(options.invalidSourceRatio ?? 0.01);
-	const ankiDeck = options.ankiDeck === undefined ? undefined : nonEmptyString(options.ankiDeck, "ankiDeck");
-	const deckRoot = options.deckRoot === undefined ? undefined : nonEmptyString(options.deckRoot, "deckRoot");
+	const ankiDeck = options.ankiDeck === undefined
+		? undefined
+		: normaliseAnkiDeckPath(nonEmptyString(options.ankiDeck, "ankiDeck"), "ankiDeck");
+	const deckRoot = options.deckRoot === undefined
+		? undefined
+		: normaliseAnkiDeckPath(nonEmptyString(options.deckRoot, "deckRoot"), "deckRoot");
 
 	try {
 		onProgress({ phase: "generation", detail: "Checking AnkiConnect before card generation..." });
